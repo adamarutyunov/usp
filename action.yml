@@ -1,0 +1,55 @@
+name: Ultimate Social Poster
+description: Publish a Markdown file to X, LinkedIn, Reddit, and Telegram through the usp CLI.
+author: Adam Arutyunov
+
+inputs:
+  markdown:
+    description: Markdown file to publish.
+    required: true
+  config:
+    description: usp config path.
+    required: false
+    default: .usp.yml
+  profile:
+    description: Config profile to publish.
+    required: false
+    default: default
+  dry_run:
+    description: If true, generate and print without publishing.
+    required: false
+    default: "false"
+  json:
+    description: If true, print machine-readable JSON output.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Install dependencies
+      shell: bash
+      run: npm ci
+      working-directory: ${{ github.action_path }}
+
+    - name: Build usp
+      shell: bash
+      run: npm run build
+      working-directory: ${{ github.action_path }}
+
+    - name: Publish
+      shell: bash
+      run: >
+        node "${{ github.action_path }}/dist/cli.js" publish "${{ inputs.markdown }}"
+        --config "${{ inputs.config }}"
+        --profile "${{ inputs.profile }}"
+        ${{ inputs.dry_run == 'true' && '--dry-run' || '' }}
+        ${{ inputs.json == 'true' && '--json' || '' }}
+
+branding:
+  icon: send
+  color: blue

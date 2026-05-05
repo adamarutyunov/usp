@@ -1,0 +1,51 @@
+{
+  "name": "usp",
+  "version": "0.1.0",
+  "description": "Ultimate Social Poster CLI for publishing Markdown posts to X, LinkedIn, Reddit, and Telegram.",
+  "type": "module",
+  "bin": {
+    "usp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "examples",
+    "README.md",
+    "action.yml"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "check": "npm run build && npm test",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "social",
+    "cli",
+    "markdown",
+    "x",
+    "linkedin",
+    "reddit",
+    "telegram"
+  ],
+  "author": "Adam Arutyunov",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adamarutyunov/usp.git"
+  },
+  "dependencies": {
+    "@google/genai": "^1.52.0",
+    "commander": "^14.0.3",
+    "mime": "^4.1.0",
+    "twitter-api-v2": "^1.29.0",
+    "yaml": "^2.8.4",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  }
+}

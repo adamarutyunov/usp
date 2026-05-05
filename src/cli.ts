@@ -1,0 +1,71 @@
+#!/usr/bin/env node
+import { Command } from "commander";
+import { accountSetCommand } from "./commands/account.js";
+import { initCommand } from "./commands/init.js";
+import { planCommand, publishCommand } from "./commands/publish.js";
+import { setupCommand } from "./commands/setup.js";
+import type { Platform } from "./types.js";
+
+const program = new Command();
+
+program
+  .name("usp")
+  .description("Ultimate Social Poster: publish Markdown to X, LinkedIn, Reddit, and Telegram.")
+  .version("0.1.0");
+
+program
+  .command("init")
+  .description("Write a starter .usp.yml project config.")
+  .option("-o, --output <path>", "Output config path", ".usp.yml")
+  .action((options) => run(() => initCommand(options)));
+
+program
+  .command("setup")
+  .description("Interactively paste and save social credentials in ~/.config/usp/config.yml.")
+  .action(() => run(setupCommand));
+
+program
+  .command("account:set")
+  .description("Set account fields in the global config.")
+  .argument("<platform>", "x, linkedin, reddit, or telegram")
+  .argument("<name>", "Account name")
+  .option("-v, --value <key=value>", "Account field value. Repeatable.", collect, [])
+  .action((platform: Platform, name: string, options) => run(() => accountSetCommand(platform, name, options)));
+
+program
+  .command("plan")
+  .description("Generate and print the platform posting plan without publishing.")
+  .argument("<markdown>", "Markdown input file")
+  .option("-c, --config <path>", "Config file path")
+  .option("-p, --profile <name>", "Profile name", "default")
+  .option("-t, --target <id>", "Target id. Repeatable.", collect, [])
+  .option("--set <key=value>", "Config override. Repeatable.", collect, [])
+  .action((file, options) => run(() => planCommand(file, options)));
+
+program
+  .command("publish")
+  .description("Generate platform posts and publish them.")
+  .argument("<markdown>", "Markdown input file")
+  .option("-c, --config <path>", "Config file path")
+  .option("-p, --profile <name>", "Profile name", "default")
+  .option("-t, --target <id>", "Target id. Repeatable.", collect, [])
+  .option("--set <key=value>", "Config override. Repeatable.", collect, [])
+  .option("--dry-run", "Print what would be posted without calling platform APIs")
+  .option("--json", "Print plan and results as JSON")
+  .action((file, options) => run(() => publishCommand(file, options)));
+
+function collect(value: string, previous: string[]) {
+  previous.push(value);
+  return previous;
+}
+
+async function run(action: () => Promise<void>) {
+  try {
+    await action();
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exitCode = 1;
+  }
+}
+
+program.parseAsync();
