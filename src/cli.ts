@@ -21,8 +21,11 @@ program
 
 program
   .command("setup")
-  .description("Interactively paste and save social credentials in ~/.config/usp/config.yml.")
-  .action(() => run(setupCommand));
+  .description("Create .usp.yml if needed and save social credentials in ~/.config/usp/config.yml.")
+  .option("--platform <platform>", "x, linkedin, reddit, or telegram")
+  .option("--account <name>", "Account name", "main")
+  .option("-v, --value <key=value>", "Account field value. Repeatable.", collect, [])
+  .action((options) => run(() => setupCommand(options)));
 
 program
   .command("account:set")

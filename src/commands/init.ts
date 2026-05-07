@@ -1,7 +1,7 @@
 import { writeProjectConfig } from "../config/config.js";
 import type { UspConfig } from "../types.js";
 
-const SAMPLE_CONFIG: UspConfig = {
+export const SAMPLE_CONFIG: UspConfig = {
   llm: {
     provider: "gemini",
     model: "gemini-2.5-flash-lite",

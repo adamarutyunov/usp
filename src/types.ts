@@ -1,6 +1,6 @@
 export type Platform = "x" | "linkedin" | "reddit" | "telegram";
 
-export type LlmProvider = "gemini" | "openai";
+export type LlmProvider = "gemini" | "openai" | "anthropic";
 
 export type JsonObject = Record<string, unknown>;
 

@@ -1,8 +1,9 @@
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
-import { loadGlobalConfig, writeGlobalConfig } from "../config/config.js";
+import { findProjectConfig, loadGlobalConfig, writeGlobalConfig, writeProjectConfig } from "../config/config.js";
 import type { Platform, UspConfig } from "../types.js";
+import { SAMPLE_CONFIG } from "./init.js";
 
 function ensureAccount(config: UspConfig, platform: Platform, name: string) {
   config.accounts ??= {};
@@ -10,6 +11,14 @@ function ensureAccount(config: UspConfig, platform: Platform, name: string) {
   const accounts = config.accounts[platform] as Record<string, Record<string, unknown>>;
   accounts[name] ??= {};
   return accounts[name]!;
+}
+
+async function ensureProjectConfig() {
+  const projectConfig = await findProjectConfig();
+  if (!projectConfig) {
+    const created = await writeProjectConfig(SAMPLE_CONFIG, ".usp.yml");
+    console.log(`Wrote ${created}`);
+  }
 }
 
 async function askRequired(rl: readline.Interface, prompt: string) {
@@ -20,7 +29,32 @@ async function askRequired(rl: readline.Interface, prompt: string) {
   return value.trim();
 }
 
-export async function setupCommand() {
+function applyValues(account: Record<string, unknown>, values: string[] = []) {
+  for (const item of values) {
+    const [key, ...rest] = item.split("=");
+    if (!key || rest.length === 0) {
+      throw new Error(`Invalid --value "${item}". Expected key=value.`);
+    }
+    account[key] = rest.join("=");
+  }
+}
+
+export async function setupCommand(options: { platform?: Platform; account?: string; value?: string[] } = {}) {
+  await ensureProjectConfig();
+
+  if (options.platform) {
+    if (!["x", "linkedin", "reddit", "telegram"].includes(options.platform)) {
+      throw new Error(`Unsupported platform: ${options.platform}`);
+    }
+    const config = await loadGlobalConfig();
+    const name = options.account ?? "main";
+    const account = ensureAccount(config, options.platform, name);
+    applyValues(account, options.value);
+    const path = await writeGlobalConfig(config);
+    console.log(`Saved ${options.platform}.${name} credentials to ${path}`);
+    return;
+  }
+
   const rl = readline.createInterface({ input, output });
   try {
     const config = await loadGlobalConfig();

@@ -10,7 +10,17 @@ It uses an LLM to generate an ordered posting plan per platform, preserves inlin
 npm install -g usp
 ```
 
-For local development:
+From this repository, install the local CLI globally:
+
+```bash
+cd ~/code/usp
+npm install
+npm run build
+npm link
+usp --help
+```
+
+Or run it without linking:
 
 ```bash
 npm install
@@ -21,10 +31,22 @@ node dist/cli.js --help
 ## Quick Start
 
 ```bash
-usp init
 usp setup
 usp publish ./post.md --dry-run
 usp publish ./post.md --json
+```
+
+`usp setup` writes `.usp.yml` first when the current directory does not already have `.usp.yml` or `usp.config.yml`, then prompts for credentials and stores them in `~/.config/usp/config.yml`.
+
+Scripted setup is also available:
+
+```bash
+usp setup --platform telegram --account main -v botToken=123:abc
+usp setup --platform x --account main \
+  -v consumerKey=... \
+  -v consumerSecret=... \
+  -v accessToken=... \
+  -v accessTokenSecret=...
 ```
 
 Markdown images are extracted with normal syntax:
@@ -85,6 +107,32 @@ LLM credentials are required. Supported providers:
 
 - `gemini`, default env `GEMINI_API_KEY`
 - `openai`, default env `OPENAI_API_KEY`
+- `anthropic`, default env `ANTHROPIC_API_KEY`
+
+Anthropic setup:
+
+```yaml
+llm:
+  provider: anthropic
+  model: claude-sonnet-4-5
+  apiKeyEnv: ANTHROPIC_API_KEY
+```
+
+Then run:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+usp publish ./post.md --dry-run
+```
+
+Or point the generated config at Anthropic:
+
+```bash
+usp publish ./post.md --dry-run \
+  --set llm.provider=anthropic \
+  --set llm.model=claude-sonnet-4-5 \
+  --set llm.apiKeyEnv=ANTHROPIC_API_KEY
+```
 
 Custom prompts can be configured globally per platform:
 
@@ -173,11 +221,14 @@ The target `chatId` may be a channel, group, private chat, or an env reference l
 ```bash
 usp init
 usp setup
+usp setup --platform telegram --account main -v botToken=123:abc
 usp account:set <platform> <name> -v key=value
 usp plan <post.md> --profile default
 usp publish <post.md> --profile default --dry-run
 usp publish <post.md> --target x-main --json
 ```
+
+Use `usp init` when you only want to create `.usp.yml`. Use `usp setup` for the normal first run; it creates `.usp.yml` if needed and then configures credentials.
 
 ## GitHub Action
 

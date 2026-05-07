@@ -73,5 +73,55 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
     };
   }
 
+  if (provider === "anthropic") {
+    const apiKey = resolveSecret(config.apiKey, config.apiKeyEnv, "Anthropic API key", "ANTHROPIC_API_KEY");
+    const model = config.model ?? "claude-sonnet-4-5";
+    return {
+      provider,
+      model,
+      async generate(prompt) {
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            model,
+            max_tokens: 2000,
+            temperature: 0.3,
+            system: "Return only valid JSON. No Markdown fences. No commentary.",
+            messages: [
+              {
+                role: "user",
+                content: prompt,
+              },
+            ],
+          }),
+        });
+
+        const data = (await response.json().catch(() => null)) as {
+          content?: Array<{ type?: string; text?: string }>;
+          error?: { message?: string };
+        } | null;
+        if (!response.ok) {
+          throw new Error(
+            `Anthropic request failed (${response.status}): ${data?.error?.message ?? JSON.stringify(data)}`
+          );
+        }
+        const text = data?.content
+          ?.filter((part) => part.type === "text")
+          .map((part) => part.text ?? "")
+          .join("")
+          .trim();
+        if (!text) {
+          throw new Error("Anthropic returned an empty response.");
+        }
+        return text;
+      },
+    };
+  }
+
   throw new Error(`Unsupported LLM provider: ${provider satisfies never}`);
 }
