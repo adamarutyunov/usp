@@ -36,7 +36,7 @@ usp publish ./post.md --dry-run
 usp publish ./post.md --json
 ```
 
-`usp setup` writes `.usp.yml` first when the current directory does not already have `.usp.yml` or `usp.config.yml`, then prompts for credentials and stores them in `~/.config/usp/config.yml`.
+`usp setup` writes `.usp.yml` first when the current directory does not already have `.usp.yml` or `usp.config.yml`, then opens a guided terminal wizard. It uses internal account names automatically (`main` for X/Reddit/Telegram, `me` for LinkedIn), shows official links for each key/token, stores credentials in `~/.config/usp/config.yml`, and stores project routing values such as subreddit and Telegram `chat_id` in `.usp.yml`.
 
 Scripted setup is also available:
 

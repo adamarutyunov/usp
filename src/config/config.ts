@@ -65,6 +65,22 @@ export async function loadGlobalConfig(): Promise<UspConfig> {
   return (await readYamlIfExists(getGlobalConfigPath())) as UspConfig;
 }
 
+export async function loadProjectConfig(configPath?: string): Promise<{ path: string; config: UspConfig } | undefined> {
+  const projectPath = configPath ? path.resolve(process.cwd(), configPath) : await findProjectConfig();
+  if (!projectPath) {
+    return undefined;
+  }
+  return {
+    path: projectPath,
+    config: (await readYamlIfExists(projectPath)) as UspConfig,
+  };
+}
+
+export async function writeConfigFile(filePath: string, config: UspConfig) {
+  await fs.writeFile(filePath, YAML.stringify(config));
+  return filePath;
+}
+
 export async function writeGlobalConfig(config: UspConfig) {
   const configPath = getGlobalConfigPath();
   await fs.mkdir(path.dirname(configPath), { recursive: true });

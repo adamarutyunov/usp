@@ -45,11 +45,13 @@ export type RedditAccount = {
   password?: SecretValue;
   passwordEnv?: string;
   userAgent?: string;
+  subreddit?: string;
 };
 
 export type TelegramAccount = {
   botToken?: SecretValue;
   botTokenEnv?: string;
+  chatId?: string;
 };
 
 export type AccountsConfig = {

@@ -1,11 +1,71 @@
-import readline from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
+import {
+  cancel,
+  group,
+  intro,
+  isCancel,
+  multiselect,
+  note,
+  outro,
+  password,
+  select,
+  text,
+} from "@clack/prompts";
 
-import { findProjectConfig, loadGlobalConfig, writeGlobalConfig, writeProjectConfig } from "../config/config.js";
-import type { Platform, UspConfig } from "../types.js";
+import {
+  findProjectConfig,
+  loadGlobalConfig,
+  loadProjectConfig,
+  writeConfigFile,
+  writeGlobalConfig,
+  writeProjectConfig,
+} from "../config/config.js";
+import type { LlmProvider, Platform, UspConfig } from "../types.js";
 import { SAMPLE_CONFIG } from "./init.js";
 
-function ensureAccount(config: UspConfig, platform: Platform, name: string) {
+const PLATFORM_ACCOUNT_NAMES: Record<Platform, string> = {
+  x: "main",
+  linkedin: "me",
+  reddit: "main",
+  telegram: "main",
+};
+
+const TARGET_IDS: Record<Platform, string> = {
+  x: "x-main",
+  linkedin: "linkedin-me",
+  reddit: "reddit-release",
+  telegram: "telegram-channel",
+};
+
+const LLM_DEFAULTS: Record<LlmProvider, { model: string; env: string; keyUrl: string; label: string }> = {
+  gemini: {
+    model: "gemini-2.5-flash-lite",
+    env: "GEMINI_API_KEY",
+    keyUrl: "https://aistudio.google.com/app/apikey",
+    label: "Gemini",
+  },
+  openai: {
+    model: "gpt-5.4-mini",
+    env: "OPENAI_API_KEY",
+    keyUrl: "https://platform.openai.com/api-keys",
+    label: "OpenAI",
+  },
+  anthropic: {
+    model: "claude-sonnet-4-5",
+    env: "ANTHROPIC_API_KEY",
+    keyUrl: "https://console.anthropic.com/settings/keys",
+    label: "Anthropic",
+  },
+};
+
+function assertNotCancel<T>(value: T | symbol): T {
+  if (isCancel(value)) {
+    cancel("Setup cancelled.");
+    process.exit(0);
+  }
+  return value;
+}
+
+function ensureAccount(config: UspConfig, platform: Platform, name = PLATFORM_ACCOUNT_NAMES[platform]) {
   config.accounts ??= {};
   config.accounts[platform] ??= {};
   const accounts = config.accounts[platform] as Record<string, Record<string, unknown>>;
@@ -15,18 +75,13 @@ function ensureAccount(config: UspConfig, platform: Platform, name: string) {
 
 async function ensureProjectConfig() {
   const projectConfig = await findProjectConfig();
-  if (!projectConfig) {
-    const created = await writeProjectConfig(SAMPLE_CONFIG, ".usp.yml");
-    console.log(`Wrote ${created}`);
+  if (projectConfig) {
+    return projectConfig;
   }
-}
 
-async function askRequired(rl: readline.Interface, prompt: string) {
-  const value = await rl.question(prompt);
-  if (!value.trim()) {
-    throw new Error(`${prompt.replace(/[: ]+$/, "")} is required.`);
-  }
-  return value.trim();
+  const created = await writeProjectConfig(SAMPLE_CONFIG, ".usp.yml");
+  note(created, "Created project config");
+  return created;
 }
 
 function applyValues(account: Record<string, unknown>, values: string[] = []) {
@@ -39,15 +94,269 @@ function applyValues(account: Record<string, unknown>, values: string[] = []) {
   }
 }
 
-export async function setupCommand(options: { platform?: Platform; account?: string; value?: string[] } = {}) {
-  await ensureProjectConfig();
+function ensureTarget(project: UspConfig, platform: Platform) {
+  const id = TARGET_IDS[platform];
+  project.targets ??= {};
+  project.targets[id] ??= {
+    platform,
+    account: PLATFORM_ACCOUNT_NAMES[platform],
+  };
+  project.targets[id]!.platform = platform;
+  project.targets[id]!.account = PLATFORM_ACCOUNT_NAMES[platform];
 
+  project.profiles ??= {};
+  project.profiles.default ??= { targets: [] };
+  if (!project.profiles.default.targets.includes(id)) {
+    project.profiles.default.targets.push(id);
+  }
+
+  return project.targets[id]!;
+}
+
+async function configureLlm(project: UspConfig, global: UspConfig) {
+  const provider = assertNotCancel(
+    await select({
+      message: "Choose your LLM provider",
+      initialValue: project.llm?.provider ?? "anthropic",
+      options: [
+        { value: "anthropic", label: "Anthropic", hint: "Claude, recommended" },
+        { value: "openai", label: "OpenAI", hint: "GPT models" },
+        { value: "gemini", label: "Gemini", hint: "Google AI Studio" },
+      ],
+    })
+  ) as LlmProvider;
+  const defaults = LLM_DEFAULTS[provider];
+
+  note(
+    [
+      `Create or copy an API key here: ${defaults.keyUrl}`,
+      `Default env var: ${defaults.env}`,
+    ].join("\n"),
+    `${defaults.label} key`
+  );
+
+  const secretMode = assertNotCancel(
+    await select({
+      message: "How should usp store the LLM key?",
+      initialValue: "env",
+      options: [
+        { value: "env", label: "Use env var", hint: defaults.env },
+        { value: "paste", label: "Paste key now", hint: "Saved in ~/.config/usp/config.yml" },
+      ],
+    })
+  ) as "env" | "paste";
+
+  project.llm = {
+    provider,
+    model: defaults.model,
+    apiKeyEnv: defaults.env,
+  };
+
+  if (secretMode === "paste") {
+    global.llm = {
+      provider,
+      model: defaults.model,
+      apiKey: assertNotCancel(await password({ message: `${defaults.label} API key` })),
+    };
+  } else {
+    global.llm = {
+      provider,
+      model: defaults.model,
+      apiKeyEnv: defaults.env,
+    };
+  }
+}
+
+async function configureX(global: UspConfig, project: UspConfig) {
+  ensureTarget(project, "x");
+  note(
+    [
+      "Create an X developer app and enable user authentication with read/write permissions.",
+      "Developer portal: https://developer.x.com/en/portal/dashboard",
+      "You need OAuth 1.0a consumer key/secret and access token/secret for media uploads.",
+    ].join("\n"),
+    "X credentials"
+  );
+
+  const account = ensureAccount(global, "x");
+  account.consumerKey = assertNotCancel(await password({ message: "X consumer key" }));
+  account.consumerSecret = assertNotCancel(await password({ message: "X consumer secret" }));
+  account.accessToken = assertNotCancel(await password({ message: "X access token" }));
+  account.accessTokenSecret = assertNotCancel(await password({ message: "X access token secret" }));
+}
+
+async function configureLinkedIn(global: UspConfig, project: UspConfig) {
+  ensureTarget(project, "linkedin");
+  note(
+    [
+      "Create a LinkedIn developer app and request member posting access.",
+      "Developer apps: https://www.linkedin.com/developers/apps",
+      "Author URN should look like: urn:li:person:abc123",
+    ].join("\n"),
+    "LinkedIn credentials"
+  );
+
+  const account = ensureAccount(global, "linkedin");
+  account.accessToken = assertNotCancel(await password({ message: "LinkedIn access token" }));
+  account.author = assertNotCancel(await text({ message: "LinkedIn personal author URN" }));
+  account.version = assertNotCancel(
+    await text({
+      message: "LinkedIn API version",
+      placeholder: "202602",
+      defaultValue: "202602",
+    })
+  );
+}
+
+async function configureReddit(global: UspConfig, project: UspConfig) {
+  const target = ensureTarget(project, "reddit");
+  note(
+    [
+      "Create a Reddit OAuth app. Script apps are simplest for personal testing.",
+      "App console: https://www.reddit.com/prefs/apps",
+      "Use OAuth scope: submit. Prefer a refresh token for CI.",
+    ].join("\n"),
+    "Reddit credentials"
+  );
+
+  target.subreddit = assertNotCancel(
+    await text({
+      message: "Subreddit for this target",
+      placeholder: "reddit_api_test",
+      defaultValue: target.subreddit ?? "reddit_api_test",
+    })
+  );
+
+  const account = ensureAccount(global, "reddit");
+  account.clientId = assertNotCancel(await password({ message: "Reddit client id" }));
+  account.clientSecret = assertNotCancel(await password({ message: "Reddit client secret" }));
+
+  const authMode = assertNotCancel(
+    await select({
+      message: "Reddit auth method",
+      initialValue: "refresh",
+      options: [
+        { value: "refresh", label: "Refresh token", hint: "Best for CI" },
+        { value: "password", label: "Username/password", hint: "Works for script apps" },
+      ],
+    })
+  ) as "refresh" | "password";
+
+  if (authMode === "refresh") {
+    account.refreshToken = assertNotCancel(await password({ message: "Reddit refresh token" }));
+    delete account.username;
+    delete account.password;
+  } else {
+    account.username = assertNotCancel(await text({ message: "Reddit username" }));
+    account.password = assertNotCancel(await password({ message: "Reddit password" }));
+    delete account.refreshToken;
+  }
+
+  account.userAgent = assertNotCancel(
+    await text({
+      message: "Reddit user agent",
+      placeholder: "usp/0.1.0 by your_reddit_username",
+      defaultValue: account.userAgent ? String(account.userAgent) : "usp/0.1.0",
+    })
+  );
+}
+
+async function configureTelegram(global: UspConfig, project: UspConfig) {
+  const target = ensureTarget(project, "telegram");
+  note(
+    [
+      "Create a bot with BotFather, then add it to your channel/group if needed.",
+      "BotFather: https://t.me/BotFather",
+      "chat_id can be a numeric chat ID or a public channel username like @my_channel.",
+    ].join("\n"),
+    "Telegram credentials"
+  );
+
+  const account = ensureAccount(global, "telegram");
+  account.botToken = assertNotCancel(await password({ message: "Telegram bot token" }));
+  target.chatId = assertNotCancel(
+    await text({
+      message: "Telegram chat_id",
+      placeholder: "@my_channel",
+      defaultValue: target.chatId?.startsWith("$") ? undefined : target.chatId,
+    })
+  );
+}
+
+async function runInteractiveSetup() {
+  intro("usp setup");
+  const projectPath = await ensureProjectConfig();
+  const loadedProject = await loadProjectConfig(projectPath);
+  if (!loadedProject) {
+    throw new Error(`Could not load project config at ${projectPath}.`);
+  }
+
+  const global = await loadGlobalConfig();
+  const project = loadedProject.config;
+
+  const sections = assertNotCancel(
+    await multiselect({
+      message: "What do you want to configure?",
+      required: true,
+      options: [
+        { value: "llm", label: "LLM provider", hint: "Anthropic, OpenAI, or Gemini" },
+        { value: "x", label: "X", hint: "API posting with media" },
+        { value: "linkedin", label: "LinkedIn", hint: "Personal profile posts" },
+        { value: "reddit", label: "Reddit", hint: "One subreddit target" },
+        { value: "telegram", label: "Telegram", hint: "Channel, group, or chat" },
+      ],
+    })
+  ) as Array<"llm" | Platform>;
+
+  await group(
+    {
+      llm: async () => {
+        if (sections.includes("llm")) {
+          await configureLlm(project, global);
+        }
+      },
+      x: async () => {
+        if (sections.includes("x")) {
+          await configureX(global, project);
+        }
+      },
+      linkedin: async () => {
+        if (sections.includes("linkedin")) {
+          await configureLinkedIn(global, project);
+        }
+      },
+      reddit: async () => {
+        if (sections.includes("reddit")) {
+          await configureReddit(global, project);
+        }
+      },
+      telegram: async () => {
+        if (sections.includes("telegram")) {
+          await configureTelegram(global, project);
+        }
+      },
+    },
+    {
+      onCancel: () => {
+        cancel("Setup cancelled.");
+        process.exit(0);
+      },
+    }
+  );
+
+  const globalPath = await writeGlobalConfig(global);
+  await writeConfigFile(loadedProject.path, project);
+  outro(`Saved credentials to ${globalPath}\nSaved project config to ${loadedProject.path}`);
+}
+
+export async function setupCommand(options: { platform?: Platform; account?: string; value?: string[] } = {}) {
   if (options.platform) {
+    await ensureProjectConfig();
     if (!["x", "linkedin", "reddit", "telegram"].includes(options.platform)) {
       throw new Error(`Unsupported platform: ${options.platform}`);
     }
     const config = await loadGlobalConfig();
-    const name = options.account ?? "main";
+    const name = options.account ?? PLATFORM_ACCOUNT_NAMES[options.platform];
     const account = ensureAccount(config, options.platform, name);
     applyValues(account, options.value);
     const path = await writeGlobalConfig(config);
@@ -55,50 +364,5 @@ export async function setupCommand(options: { platform?: Platform; account?: str
     return;
   }
 
-  const rl = readline.createInterface({ input, output });
-  try {
-    const config = await loadGlobalConfig();
-    const platform = (await askRequired(rl, "Platform (x/linkedin/reddit/telegram): ")) as Platform;
-    if (!["x", "linkedin", "reddit", "telegram"].includes(platform)) {
-      throw new Error(`Unsupported platform: ${platform}`);
-    }
-
-    const name = (await rl.question("Account name [main]: ")).trim() || "main";
-    const account = ensureAccount(config, platform, name);
-
-    if (platform === "x") {
-      account.consumerKey = await askRequired(rl, "X consumer key: ");
-      account.consumerSecret = await askRequired(rl, "X consumer secret: ");
-      account.accessToken = await askRequired(rl, "X access token: ");
-      account.accessTokenSecret = await askRequired(rl, "X access token secret: ");
-    }
-
-    if (platform === "linkedin") {
-      account.accessToken = await askRequired(rl, "LinkedIn access token: ");
-      account.author = await askRequired(rl, "LinkedIn author URN (urn:li:person:...): ");
-      account.version = (await rl.question("LinkedIn API version [202602]: ")).trim() || "202602";
-    }
-
-    if (platform === "reddit") {
-      account.clientId = await askRequired(rl, "Reddit client id: ");
-      account.clientSecret = await askRequired(rl, "Reddit client secret: ");
-      account.refreshToken = await rl.question("Reddit refresh token (preferred, optional): ");
-      if (!String(account.refreshToken).trim()) {
-        delete account.refreshToken;
-        account.username = await askRequired(rl, "Reddit username: ");
-        account.password = await askRequired(rl, "Reddit password: ");
-      }
-      account.userAgent =
-        (await rl.question("Reddit user agent [usp/0.1.0]: ")).trim() || "usp/0.1.0";
-    }
-
-    if (platform === "telegram") {
-      account.botToken = await askRequired(rl, "Telegram bot token: ");
-    }
-
-    const path = await writeGlobalConfig(config);
-    console.log(`Saved ${platform}.${name} credentials to ${path}`);
-  } finally {
-    rl.close();
-  }
+  await runInteractiveSetup();
 }
