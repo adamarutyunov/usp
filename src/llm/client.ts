@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import type { LlmConfig, LlmProvider } from "../types.js";
-import { resolveSecret } from "../util/secrets.js";
+import { optionalSecret, resolveSecret } from "../util/secrets.js";
+import { readCodexOpenAiCredential } from "./auth.js";
 
 export type LlmClient = {
   provider: LlmProvider;
@@ -37,16 +38,22 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
   }
 
   if (provider === "openai") {
-    const apiKey = resolveSecret(config.apiKey, config.apiKeyEnv, "OpenAI API key", "OPENAI_API_KEY");
     const model = config.model ?? "gpt-5.4-mini";
     return {
       provider,
       model,
       async generate(prompt) {
+        const credential =
+          config.authSource === "codex"
+            ? await readCodexOpenAiCredential()
+            : {
+                kind: "apiKey" as const,
+                value: resolveSecret(config.apiKey, config.apiKeyEnv, "OpenAI API key", "OPENAI_API_KEY"),
+              };
         const response = await fetch("https://api.openai.com/v1/responses", {
           method: "POST",
           headers: {
-            authorization: `Bearer ${apiKey}`,
+            authorization: `Bearer ${credential.value}`,
             "content-type": "application/json",
           },
           body: JSON.stringify({
@@ -74,8 +81,14 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
   }
 
   if (provider === "anthropic") {
-    const apiKey = resolveSecret(config.apiKey, config.apiKeyEnv, "Anthropic API key", "ANTHROPIC_API_KEY");
+    const apiKey = optionalSecret(config.apiKey, config.apiKeyEnv, "ANTHROPIC_API_KEY");
+    const authToken = optionalSecret(config.authToken, config.authTokenEnv, "ANTHROPIC_AUTH_TOKEN");
     const model = config.model ?? "claude-sonnet-4-5";
+    if (!apiKey && !authToken) {
+      throw new Error(
+        "Missing Anthropic API key or auth token. Provide ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or paste a Claude setup-token result in usp setup."
+      );
+    }
     return {
       provider,
       model,
@@ -83,7 +96,8 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
         const response = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
-            "x-api-key": apiKey,
+            ...(apiKey ? { "x-api-key": apiKey } : {}),
+            ...(authToken ? { authorization: `Bearer ${authToken}` } : {}),
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
           },

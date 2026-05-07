@@ -12,6 +12,10 @@ export function getGlobalConfigPath() {
   return path.join(os.homedir(), ".config", "usp", "config.yml");
 }
 
+export function getSocialAuthDir() {
+  return path.join(os.homedir(), ".config", "usp", "social-auth");
+}
+
 async function readYamlIfExists(filePath: string): Promise<JsonObject> {
   try {
     const raw = await fs.readFile(filePath, "utf8");
@@ -22,6 +26,28 @@ async function readYamlIfExists(filePath: string): Promise<JsonObject> {
     }
     throw error;
   }
+}
+
+async function readSocialAuthConfig(): Promise<JsonObject> {
+  const dir = getSocialAuthDir();
+  let entries: string[] = [];
+  try {
+    entries = await fs.readdir(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
+
+  let merged: JsonObject = {};
+  for (const entry of entries) {
+    if (!entry.endsWith(".yml") && !entry.endsWith(".yaml")) {
+      continue;
+    }
+    merged = deepMerge(merged, await readYamlIfExists(path.join(dir, entry)));
+  }
+  return merged;
 }
 
 export async function findProjectConfig(cwd = process.cwd()) {
@@ -44,12 +70,13 @@ export async function loadConfig(options: {
 } = {}): Promise<UspConfig> {
   const cwd = options.cwd ?? process.cwd();
   const globalConfig = await readYamlIfExists(getGlobalConfigPath());
+  const socialAuthConfig = await readSocialAuthConfig();
   const projectPath = options.configPath
     ? path.resolve(cwd, options.configPath)
     : await findProjectConfig(cwd);
   const projectConfig = projectPath ? await readYamlIfExists(projectPath) : {};
 
-  let merged = deepMerge(globalConfig, projectConfig);
+  let merged = deepMerge(deepMerge(globalConfig, socialAuthConfig), projectConfig);
   for (const override of options.overrides ?? []) {
     const [key, ...rest] = override.split("=");
     if (!key || rest.length === 0) {
@@ -63,6 +90,10 @@ export async function loadConfig(options: {
 
 export async function loadGlobalConfig(): Promise<UspConfig> {
   return (await readYamlIfExists(getGlobalConfigPath())) as UspConfig;
+}
+
+export async function loadSocialAuthConfig(): Promise<UspConfig> {
+  return (await readSocialAuthConfig()) as UspConfig;
 }
 
 export async function loadProjectConfig(configPath?: string): Promise<{ path: string; config: UspConfig } | undefined> {
@@ -86,6 +117,14 @@ export async function writeGlobalConfig(config: UspConfig) {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   await fs.writeFile(configPath, YAML.stringify(config), { mode: 0o600 });
   return configPath;
+}
+
+export async function writeSocialAuthConfig(fileName: string, config: UspConfig) {
+  const dir = getSocialAuthDir();
+  await fs.mkdir(dir, { recursive: true });
+  const filePath = path.join(dir, fileName.endsWith(".yml") ? fileName : `${fileName}.yml`);
+  await fs.writeFile(filePath, YAML.stringify(config), { mode: 0o600 });
+  return filePath;
 }
 
 export async function writeProjectConfig(config: UspConfig, filePath = ".usp.yml") {

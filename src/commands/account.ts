@@ -1,4 +1,4 @@
-import { loadGlobalConfig, writeGlobalConfig } from "../config/config.js";
+import { loadSocialAuthConfig, writeSocialAuthConfig } from "../config/config.js";
 import type { Platform, UspConfig } from "../types.js";
 import { setDeepValue } from "../util/object.js";
 
@@ -19,7 +19,7 @@ export async function accountSetCommand(
     throw new Error(`Unsupported platform: ${platform}`);
   }
 
-  const config = await loadGlobalConfig();
+  const config = await loadSocialAuthConfig();
   const account = ensureAccount(config, platform, name);
   for (const item of options.value ?? []) {
     const [key, ...rest] = item.split("=");
@@ -29,6 +29,12 @@ export async function accountSetCommand(
     setDeepValue(account, key, rest.join("="));
   }
 
-  const path = await writeGlobalConfig(config);
+  const path = await writeSocialAuthConfig(`${platform}.yml`, {
+    accounts: {
+      [platform]: {
+        [name]: account,
+      },
+    },
+  } as UspConfig);
   console.log(`Saved ${platform}.${name} to ${path}`);
 }

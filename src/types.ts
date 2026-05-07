@@ -11,6 +11,9 @@ export type LlmConfig = {
   model?: string;
   apiKey?: SecretValue;
   apiKeyEnv?: string;
+  authToken?: SecretValue;
+  authTokenEnv?: string;
+  authSource?: "api-key" | "codex" | "anthropic-auth-token";
 };
 
 export type XAccount = {

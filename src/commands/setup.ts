@@ -1,9 +1,7 @@
 import {
   cancel,
-  group,
   intro,
   isCancel,
-  multiselect,
   note,
   outro,
   password,
@@ -13,11 +11,11 @@ import {
 
 import {
   findProjectConfig,
-  loadGlobalConfig,
   loadProjectConfig,
+  loadSocialAuthConfig,
   writeConfigFile,
-  writeGlobalConfig,
   writeProjectConfig,
+  writeSocialAuthConfig,
 } from "../config/config.js";
 import type { LlmProvider, Platform, UspConfig } from "../types.js";
 import { SAMPLE_CONFIG } from "./init.js";
@@ -57,6 +55,8 @@ const LLM_DEFAULTS: Record<LlmProvider, { model: string; env: string; keyUrl: st
   },
 };
 
+const SOCIAL_PLATFORMS: Platform[] = ["x", "linkedin", "reddit", "telegram"];
+
 function assertNotCancel<T>(value: T | symbol): T {
   if (isCancel(value)) {
     cancel("Setup cancelled.");
@@ -94,6 +94,24 @@ function applyValues(account: Record<string, unknown>, values: string[] = []) {
   }
 }
 
+async function writePlatformSocialAuth(platform: Platform, account: Record<string, unknown>) {
+  const accountName = PLATFORM_ACCOUNT_NAMES[platform];
+  return writeSocialAuthConfig(`${platform}.yml`, {
+    accounts: {
+      [platform]: {
+        [accountName]: account,
+      },
+    },
+  } as UspConfig);
+}
+
+async function writeLlmAuth(config: UspConfig) {
+  if (!config.llm) {
+    return undefined;
+  }
+  return writeSocialAuthConfig("llm.yml", config);
+}
+
 function ensureTarget(project: UspConfig, platform: Platform) {
   const id = TARGET_IDS[platform];
   project.targets ??= {};
@@ -113,7 +131,7 @@ function ensureTarget(project: UspConfig, platform: Platform) {
   return project.targets[id]!;
 }
 
-async function configureLlm(project: UspConfig, global: UspConfig) {
+async function configureLlm(project: UspConfig, socialAuth: UspConfig) {
   const provider = assertNotCancel(
     await select({
       message: "Choose your LLM provider",
@@ -127,39 +145,128 @@ async function configureLlm(project: UspConfig, global: UspConfig) {
   ) as LlmProvider;
   const defaults = LLM_DEFAULTS[provider];
 
-  note(
-    [
-      `Create or copy an API key here: ${defaults.keyUrl}`,
-      `Default env var: ${defaults.env}`,
-    ].join("\n"),
-    `${defaults.label} key`
-  );
-
-  const secretMode = assertNotCancel(
-    await select({
-      message: "How should usp store the LLM key?",
-      initialValue: "env",
-      options: [
-        { value: "env", label: "Use env var", hint: defaults.env },
-        { value: "paste", label: "Paste key now", hint: "Saved in ~/.config/usp/config.yml" },
-      ],
-    })
-  ) as "env" | "paste";
-
   project.llm = {
     provider,
     model: defaults.model,
     apiKeyEnv: defaults.env,
   };
 
+  if (provider === "openai") {
+    note(
+      [
+        "Browser login path: run `codex login` first. usp will read ~/.codex/auth.json.",
+        "API key path: https://platform.openai.com/api-keys",
+        "Default env var: OPENAI_API_KEY",
+      ].join("\n"),
+      "OpenAI auth"
+    );
+    const mode = assertNotCancel(
+      await select({
+        message: "How should usp authenticate OpenAI?",
+        initialValue: "codex",
+        options: [
+          { value: "codex", label: "Use Codex browser login", hint: "~/.codex/auth.json" },
+          { value: "env", label: "Use env var", hint: "OPENAI_API_KEY" },
+          { value: "paste", label: "Paste API key now", hint: "Saved under social-auth" },
+        ],
+      })
+    ) as "codex" | "env" | "paste";
+
+    project.llm = {
+      provider,
+      model: defaults.model,
+      ...(mode === "codex" ? { authSource: "codex" as const } : { apiKeyEnv: defaults.env }),
+    };
+    socialAuth.llm =
+      mode === "paste"
+        ? {
+            provider,
+            model: defaults.model,
+            apiKey: assertNotCancel(await password({ message: "OpenAI API key" })),
+          }
+        : mode === "codex"
+          ? { provider, model: defaults.model, authSource: "codex" }
+          : { provider, model: defaults.model, apiKeyEnv: defaults.env };
+    return;
+  }
+
+  if (provider === "anthropic") {
+    note(
+      [
+        "API key path: https://console.anthropic.com/settings/keys",
+        "Claude Code token path: run `claude setup-token`, then paste the result or expose it as ANTHROPIC_AUTH_TOKEN.",
+        "Anthropic documents ANTHROPIC_AUTH_TOKEN as a bearer Authorization token for Claude Code style auth.",
+      ].join("\n"),
+      "Anthropic auth"
+    );
+    const mode = assertNotCancel(
+      await select({
+        message: "How should usp authenticate Anthropic?",
+        initialValue: "auth-env",
+        options: [
+          { value: "auth-env", label: "Use ANTHROPIC_AUTH_TOKEN", hint: "Claude setup-token result in env" },
+          { value: "auth-paste", label: "Paste Claude setup-token result", hint: "Saved under social-auth" },
+          { value: "api-env", label: "Use ANTHROPIC_API_KEY", hint: "API key env var" },
+          { value: "api-paste", label: "Paste API key now", hint: "Saved under social-auth" },
+        ],
+      })
+    ) as "auth-env" | "auth-paste" | "api-env" | "api-paste";
+
+    project.llm = {
+      provider,
+      model: defaults.model,
+      ...(mode.startsWith("auth")
+        ? { authSource: "anthropic-auth-token" as const, authTokenEnv: "ANTHROPIC_AUTH_TOKEN" }
+        : { apiKeyEnv: "ANTHROPIC_API_KEY" }),
+    };
+    socialAuth.llm =
+      mode === "auth-paste"
+        ? {
+            provider,
+            model: defaults.model,
+            authSource: "anthropic-auth-token",
+            authToken: assertNotCancel(await password({ message: "Claude setup-token result" })),
+          }
+        : mode === "auth-env"
+          ? {
+              provider,
+              model: defaults.model,
+              authSource: "anthropic-auth-token",
+              authTokenEnv: "ANTHROPIC_AUTH_TOKEN",
+            }
+          : mode === "api-paste"
+            ? {
+                provider,
+                model: defaults.model,
+                apiKey: assertNotCancel(await password({ message: "Anthropic API key" })),
+              }
+            : { provider, model: defaults.model, apiKeyEnv: "ANTHROPIC_API_KEY" };
+    return;
+  }
+
+  note(
+    [`Create or copy an API key here: ${defaults.keyUrl}`, `Default env var: ${defaults.env}`].join("\n"),
+    `${defaults.label} key`
+  );
+  const secretMode = assertNotCancel(
+    await select({
+      message: "How should usp store the LLM key?",
+      initialValue: "env",
+      options: [
+        { value: "env", label: "Use env var", hint: defaults.env },
+        { value: "paste", label: "Paste key now", hint: "Saved under social-auth" },
+      ],
+    })
+  ) as "env" | "paste";
+
   if (secretMode === "paste") {
-    global.llm = {
+    socialAuth.llm = {
       provider,
       model: defaults.model,
       apiKey: assertNotCancel(await password({ message: `${defaults.label} API key` })),
     };
   } else {
-    global.llm = {
+    socialAuth.llm = {
       provider,
       model: defaults.model,
       apiKeyEnv: defaults.env,
@@ -167,7 +274,7 @@ async function configureLlm(project: UspConfig, global: UspConfig) {
   }
 }
 
-async function configureX(global: UspConfig, project: UspConfig) {
+async function configureX(socialAuth: UspConfig, project: UspConfig) {
   ensureTarget(project, "x");
   note(
     [
@@ -178,14 +285,14 @@ async function configureX(global: UspConfig, project: UspConfig) {
     "X credentials"
   );
 
-  const account = ensureAccount(global, "x");
+  const account = ensureAccount(socialAuth, "x");
   account.consumerKey = assertNotCancel(await password({ message: "X consumer key" }));
   account.consumerSecret = assertNotCancel(await password({ message: "X consumer secret" }));
   account.accessToken = assertNotCancel(await password({ message: "X access token" }));
   account.accessTokenSecret = assertNotCancel(await password({ message: "X access token secret" }));
 }
 
-async function configureLinkedIn(global: UspConfig, project: UspConfig) {
+async function configureLinkedIn(socialAuth: UspConfig, project: UspConfig) {
   ensureTarget(project, "linkedin");
   note(
     [
@@ -196,7 +303,7 @@ async function configureLinkedIn(global: UspConfig, project: UspConfig) {
     "LinkedIn credentials"
   );
 
-  const account = ensureAccount(global, "linkedin");
+  const account = ensureAccount(socialAuth, "linkedin");
   account.accessToken = assertNotCancel(await password({ message: "LinkedIn access token" }));
   account.author = assertNotCancel(await text({ message: "LinkedIn personal author URN" }));
   account.version = assertNotCancel(
@@ -208,7 +315,7 @@ async function configureLinkedIn(global: UspConfig, project: UspConfig) {
   );
 }
 
-async function configureReddit(global: UspConfig, project: UspConfig) {
+async function configureReddit(socialAuth: UspConfig, project: UspConfig) {
   const target = ensureTarget(project, "reddit");
   note(
     [
@@ -227,7 +334,7 @@ async function configureReddit(global: UspConfig, project: UspConfig) {
     })
   );
 
-  const account = ensureAccount(global, "reddit");
+  const account = ensureAccount(socialAuth, "reddit");
   account.clientId = assertNotCancel(await password({ message: "Reddit client id" }));
   account.clientSecret = assertNotCancel(await password({ message: "Reddit client secret" }));
 
@@ -261,7 +368,7 @@ async function configureReddit(global: UspConfig, project: UspConfig) {
   );
 }
 
-async function configureTelegram(global: UspConfig, project: UspConfig) {
+async function configureTelegram(socialAuth: UspConfig, project: UspConfig) {
   const target = ensureTarget(project, "telegram");
   note(
     [
@@ -272,7 +379,7 @@ async function configureTelegram(global: UspConfig, project: UspConfig) {
     "Telegram credentials"
   );
 
-  const account = ensureAccount(global, "telegram");
+  const account = ensureAccount(socialAuth, "telegram");
   account.botToken = assertNotCancel(await password({ message: "Telegram bot token" }));
   target.chatId = assertNotCancel(
     await text({
@@ -291,62 +398,53 @@ async function runInteractiveSetup() {
     throw new Error(`Could not load project config at ${projectPath}.`);
   }
 
-  const global = await loadGlobalConfig();
+  const socialAuth = await loadSocialAuthConfig();
   const project = loadedProject.config;
 
-  const sections = assertNotCancel(
-    await multiselect({
-      message: "What do you want to configure?",
-      required: true,
-      options: [
-        { value: "llm", label: "LLM provider", hint: "Anthropic, OpenAI, or Gemini" },
-        { value: "x", label: "X", hint: "API posting with media" },
-        { value: "linkedin", label: "LinkedIn", hint: "Personal profile posts" },
-        { value: "reddit", label: "Reddit", hint: "One subreddit target" },
-        { value: "telegram", label: "Telegram", hint: "Channel, group, or chat" },
-      ],
-    })
-  ) as Array<"llm" | Platform>;
+  for (;;) {
+    const choice = assertNotCancel(
+      await select({
+        message: "Setup menu",
+        options: [
+          { value: "llm", label: "LLM provider", hint: "Anthropic, OpenAI, Gemini" },
+          { value: "x", label: "X", hint: "API posting with media" },
+          { value: "linkedin", label: "LinkedIn", hint: "Personal profile posts" },
+          { value: "reddit", label: "Reddit", hint: "One subreddit target" },
+          { value: "telegram", label: "Telegram", hint: "Channel, group, or chat" },
+          { value: "exit", label: "Save and exit" },
+        ],
+      })
+    ) as "llm" | Platform | "exit";
 
-  await group(
-    {
-      llm: async () => {
-        if (sections.includes("llm")) {
-          await configureLlm(project, global);
-        }
-      },
-      x: async () => {
-        if (sections.includes("x")) {
-          await configureX(global, project);
-        }
-      },
-      linkedin: async () => {
-        if (sections.includes("linkedin")) {
-          await configureLinkedIn(global, project);
-        }
-      },
-      reddit: async () => {
-        if (sections.includes("reddit")) {
-          await configureReddit(global, project);
-        }
-      },
-      telegram: async () => {
-        if (sections.includes("telegram")) {
-          await configureTelegram(global, project);
-        }
-      },
-    },
-    {
-      onCancel: () => {
-        cancel("Setup cancelled.");
-        process.exit(0);
-      },
+    if (choice === "exit") {
+      await writeLlmAuth({ llm: socialAuth.llm });
+      await writeConfigFile(loadedProject.path, project);
+      outro(`Saved social auth under ~/.config/usp/social-auth\nSaved project config to ${loadedProject.path}`);
+      return;
     }
-  );
 
-  const globalPath = await writeGlobalConfig(global);
-  await writeConfigFile(loadedProject.path, project);
-  outro(`Saved credentials to ${globalPath}\nSaved project config to ${loadedProject.path}`);
+    if (choice === "llm") {
+      await configureLlm(project, socialAuth);
+      await writeLlmAuth({ llm: socialAuth.llm });
+      await writeConfigFile(loadedProject.path, project);
+      note("LLM settings saved. Pick another section or Save and exit.", "Saved");
+      continue;
+    }
+
+    if (choice === "x") {
+      await configureX(socialAuth, project);
+    } else if (choice === "linkedin") {
+      await configureLinkedIn(socialAuth, project);
+    } else if (choice === "reddit") {
+      await configureReddit(socialAuth, project);
+    } else if (choice === "telegram") {
+      await configureTelegram(socialAuth, project);
+    }
+
+    await writePlatformSocialAuth(choice, ensureAccount(socialAuth, choice));
+    await writeConfigFile(loadedProject.path, project);
+    note(`${choice} settings saved. Pick another section or Save and exit.`, "Saved");
+  }
 }
 
 export async function setupCommand(options: { platform?: Platform; account?: string; value?: string[] } = {}) {
@@ -355,11 +453,11 @@ export async function setupCommand(options: { platform?: Platform; account?: str
     if (!["x", "linkedin", "reddit", "telegram"].includes(options.platform)) {
       throw new Error(`Unsupported platform: ${options.platform}`);
     }
-    const config = await loadGlobalConfig();
+    const config = await loadSocialAuthConfig();
     const name = options.account ?? PLATFORM_ACCOUNT_NAMES[options.platform];
     const account = ensureAccount(config, options.platform, name);
     applyValues(account, options.value);
-    const path = await writeGlobalConfig(config);
+    const path = await writePlatformSocialAuth(options.platform, account);
     console.log(`Saved ${options.platform}.${name} credentials to ${path}`);
     return;
   }

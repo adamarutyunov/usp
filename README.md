@@ -36,7 +36,7 @@ usp publish ./post.md --dry-run
 usp publish ./post.md --json
 ```
 
-`usp setup` writes `.usp.yml` first when the current directory does not already have `.usp.yml` or `usp.config.yml`, then opens a guided terminal wizard. It uses internal account names automatically (`main` for X/Reddit/Telegram, `me` for LinkedIn), shows official links for each key/token, stores credentials in `~/.config/usp/config.yml`, and stores project routing values such as subreddit and Telegram `chat_id` in `.usp.yml`.
+`usp setup` writes `.usp.yml` first when the current directory does not already have `.usp.yml` or `usp.config.yml`, then opens a guided terminal wizard. The top-level setup menu is a loop: configure one section, return to the menu, then choose another section or Save and exit. It uses internal account names automatically (`main` for X/Reddit/Telegram, `me` for LinkedIn), shows official links for each key/token, stores social credentials under `~/.config/usp/social-auth/`, and stores project routing values such as subreddit and Telegram `chat_id` in `.usp.yml`.
 
 Scripted setup is also available:
 
@@ -63,9 +63,9 @@ The LLM receives stable media IDs such as `img1`, and the generated plan attache
 
 ## Configuration
 
-`usp` merges global config from `~/.config/usp/config.yml` with project config from `.usp.yml` or `usp.config.yml`. Project config wins.
+`usp` merges global config from `~/.config/usp/config.yml`, social auth files from `~/.config/usp/social-auth/*.yml`, and project config from `.usp.yml` or `usp.config.yml`. Project config wins.
 
-Credentials can be provided directly in config, through `*_Env` fields, environment variables, or CLI overrides:
+Social credentials should live in `~/.config/usp/social-auth/` when saved by the wizard or `account:set`. They can also be provided through `*_Env` fields, environment variables, or CLI overrides:
 
 ```bash
 usp account:set telegram main -v botToken=123:abc
@@ -106,8 +106,24 @@ targets:
 LLM credentials are required. Supported providers:
 
 - `gemini`, default env `GEMINI_API_KEY`
-- `openai`, default env `OPENAI_API_KEY`
-- `anthropic`, default env `ANTHROPIC_API_KEY`
+- `openai`, default env `OPENAI_API_KEY`, or Codex browser login via `~/.codex/auth.json`
+- `anthropic`, default env `ANTHROPIC_API_KEY`, or Claude Code token via `ANTHROPIC_AUTH_TOKEN`
+
+OpenAI with Codex browser login:
+
+```bash
+codex login
+usp setup
+```
+
+In the LLM section, choose OpenAI, then “Use Codex browser login”. The project config will use:
+
+```yaml
+llm:
+  provider: openai
+  model: gpt-5.4-mini
+  authSource: codex
+```
 
 Anthropic setup:
 
@@ -117,6 +133,16 @@ llm:
   model: claude-sonnet-4-5
   apiKeyEnv: ANTHROPIC_API_KEY
 ```
+
+Claude Code token setup:
+
+```bash
+claude setup-token
+export ANTHROPIC_AUTH_TOKEN=<result>
+usp setup
+```
+
+In the LLM section, choose Anthropic, then “Use ANTHROPIC_AUTH_TOKEN” or “Paste Claude setup-token result”.
 
 Then run:
 

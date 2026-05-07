@@ -35,4 +35,38 @@ describe("createLlmClient", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it("creates an Anthropic client using ANTHROPIC_AUTH_TOKEN", async () => {
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "setup-token");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          content: [{ type: "text", text: "{\"units\":[{\"text\":\"ok\"}]}" }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    ) as typeof fetch;
+
+    try {
+      const client = createLlmClient({
+        provider: "anthropic",
+        authSource: "anthropic-auth-token",
+        authTokenEnv: "ANTHROPIC_AUTH_TOKEN",
+      });
+      await client.generate("prompt");
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "https://api.anthropic.com/v1/messages",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            authorization: "Bearer setup-token",
+          }),
+        })
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.unstubAllEnvs();
+    }
+  });
 });
