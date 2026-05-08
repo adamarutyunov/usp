@@ -128,6 +128,8 @@ export type PublishTargetResult = {
   platform: Platform;
   account: string;
   dryRun: boolean;
+  ok?: boolean;
+  error?: string;
   posts: Array<{
     id?: string;
     url?: string;

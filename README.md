@@ -1,6 +1,6 @@
-# usp
+# Ultimate Social Poster
 
-Ultimate Social Poster is a Node.js CLI for turning one Markdown draft into platform-specific posts for X, LinkedIn, Reddit, and Telegram.
+Ultimate Social Poster (`usp`) is a Node.js CLI for turning one Markdown draft into platform-specific posts for X, LinkedIn, Reddit, and Telegram.
 
 It uses an LLM to generate an ordered posting plan per platform, preserves inline Markdown image order, uploads local images where the official API supports it, and returns human-readable or JSON publish results.
 
@@ -36,7 +36,7 @@ usp publish ./post.md --dry-run
 usp publish ./post.md --json
 ```
 
-`usp setup` writes `.usp.yml` first when the current directory does not already have `.usp.yml` or `usp.config.yml`, then opens a guided terminal wizard. The top-level setup menu is a loop: configure one section, return to the menu, then choose another section or Save and exit. It uses internal account names automatically (`main` for X/Reddit/Telegram, `me` for LinkedIn), shows official links for each key/token, stores social credentials under `~/.config/usp/social-auth/`, and stores project routing values such as subreddit and Telegram `chat_id` in `.usp.yml`.
+`usp setup` writes `.usp.yml` first when the current directory does not already have `.usp.yml` or `usp.config.yml`, then opens a guided terminal wizard. The top-level setup menu is a loop: configure one section, return to the menu, then choose another section or Exit. It uses internal account names automatically (`main` for X/Reddit/Telegram, `me` for LinkedIn), shows official links for each key/token, stores social credentials under `~/.config/usp/social-auth/`, and stores project routing values such as subreddit and Telegram `chat_id` in `.usp.yml`.
 
 Scripted setup is also available:
 

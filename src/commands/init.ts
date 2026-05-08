@@ -32,35 +32,6 @@ export const SAMPLE_CONFIG: UspConfig = {
       chatId: "$TELEGRAM_CHAT_ID",
     },
   },
-  accounts: {
-    x: {
-      main: {
-        consumerKeyEnv: "X_CONSUMER_KEY",
-        consumerSecretEnv: "X_CONSUMER_SECRET",
-        accessTokenEnv: "X_ACCESS_TOKEN",
-        accessTokenSecretEnv: "X_ACCESS_TOKEN_SECRET",
-      },
-    },
-    linkedin: {
-      me: {
-        accessTokenEnv: "LINKEDIN_ACCESS_TOKEN",
-        author: "urn:li:person:YOUR_PERSON_ID",
-      },
-    },
-    reddit: {
-      main: {
-        clientIdEnv: "REDDIT_CLIENT_ID",
-        clientSecretEnv: "REDDIT_CLIENT_SECRET",
-        refreshTokenEnv: "REDDIT_REFRESH_TOKEN",
-        userAgent: "usp/0.1.0 by YOUR_REDDIT_USERNAME",
-      },
-    },
-    telegram: {
-      main: {
-        botTokenEnv: "TELEGRAM_BOT_TOKEN",
-      },
-    },
-  },
 };
 
 export async function initCommand(options: { output?: string }) {

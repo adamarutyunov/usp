@@ -39,8 +39,10 @@
     "@google/genai": "^1.52.0",
     "commander": "^14.0.3",
     "mime": "^4.1.0",
+    "ora": "^9.4.0",
     "twitter-api-v2": "^1.29.0",
     "yaml": "^2.8.4",
+    "yoctocolors": "^2.1.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {

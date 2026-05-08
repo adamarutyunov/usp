@@ -76,7 +76,7 @@ export async function loadConfig(options: {
     : await findProjectConfig(cwd);
   const projectConfig = projectPath ? await readYamlIfExists(projectPath) : {};
 
-  let merged = deepMerge(deepMerge(globalConfig, socialAuthConfig), projectConfig);
+  let merged = deepMerge(deepMerge(globalConfig, projectConfig), socialAuthConfig);
   for (const override of options.overrides ?? []) {
     const [key, ...rest] = override.split("=");
     if (!key || rest.length === 0) {

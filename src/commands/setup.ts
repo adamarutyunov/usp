@@ -131,6 +131,72 @@ function ensureTarget(project: UspConfig, platform: Platform) {
   return project.targets[id]!;
 }
 
+function hasValue(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function accountFor(config: UspConfig, platform: Platform) {
+  return config.accounts?.[platform]?.[PLATFORM_ACCOUNT_NAMES[platform]] as
+    | Record<string, unknown>
+    | undefined;
+}
+
+function llmStatus(project: UspConfig, socialAuth: UspConfig) {
+  const llm = socialAuth.llm ?? project.llm;
+  if (!llm?.provider) {
+    return "not set";
+  }
+
+  const auth =
+    llm.authSource === "codex"
+      ? "Codex"
+      : llm.authSource === "anthropic-auth-token" || llm.authToken || llm.authTokenEnv
+        ? "Claude token"
+        : llm.apiKey || llm.apiKeyEnv
+          ? "API key"
+          : "auth pending";
+  return `${llm.provider}, ${auth}`;
+}
+
+function platformStatus(project: UspConfig, socialAuth: UspConfig, platform: Platform) {
+  const account = accountFor(socialAuth, platform);
+  const target = project.targets?.[TARGET_IDS[platform]];
+
+  if (platform === "x") {
+    return account &&
+      hasValue(account.consumerKey) &&
+      hasValue(account.consumerSecret) &&
+      hasValue(account.accessToken) &&
+      hasValue(account.accessTokenSecret)
+      ? "set"
+      : "not set";
+  }
+
+  if (platform === "linkedin") {
+    return account && hasValue(account.accessToken) && hasValue(account.author) ? "set" : "not set";
+  }
+
+  if (platform === "reddit") {
+    return account &&
+      hasValue(account.clientId) &&
+      hasValue(account.clientSecret) &&
+      (hasValue(account.refreshToken) || (hasValue(account.username) && hasValue(account.password))) &&
+      hasValue(target?.subreddit)
+      ? "set"
+      : "not set";
+  }
+
+  return account && hasValue(account.botToken) && hasValue(target?.chatId) ? "set" : "not set";
+}
+
+function statusHint(status: string) {
+  return status === "set" ? "configured" : status;
+}
+
+function socialSummary(project: UspConfig, socialAuth: UspConfig) {
+  return SOCIAL_PLATFORMS.map((platform) => `${platform}: ${platformStatus(project, socialAuth, platform)}`).join(", ");
+}
+
 async function configureLlm(project: UspConfig, socialAuth: UspConfig) {
   const provider = assertNotCancel(
     await select({
@@ -194,7 +260,7 @@ async function configureLlm(project: UspConfig, socialAuth: UspConfig) {
     note(
       [
         "API key path: https://console.anthropic.com/settings/keys",
-        "Claude Code token path: run `claude setup-token`, then paste the result or expose it as ANTHROPIC_AUTH_TOKEN.",
+        "Claude Code token path: run `claude setup-token`, then paste the result here.",
         "Anthropic documents ANTHROPIC_AUTH_TOKEN as a bearer Authorization token for Claude Code style auth.",
       ].join("\n"),
       "Anthropic auth"
@@ -202,20 +268,19 @@ async function configureLlm(project: UspConfig, socialAuth: UspConfig) {
     const mode = assertNotCancel(
       await select({
         message: "How should usp authenticate Anthropic?",
-        initialValue: "auth-env",
+        initialValue: "auth-paste",
         options: [
-          { value: "auth-env", label: "Use ANTHROPIC_AUTH_TOKEN", hint: "Claude setup-token result in env" },
           { value: "auth-paste", label: "Paste Claude setup-token result", hint: "Saved under social-auth" },
           { value: "api-env", label: "Use ANTHROPIC_API_KEY", hint: "API key env var" },
           { value: "api-paste", label: "Paste API key now", hint: "Saved under social-auth" },
         ],
       })
-    ) as "auth-env" | "auth-paste" | "api-env" | "api-paste";
+    ) as "auth-paste" | "api-env" | "api-paste";
 
     project.llm = {
       provider,
       model: defaults.model,
-      ...(mode.startsWith("auth")
+      ...(mode === "auth-paste"
         ? { authSource: "anthropic-auth-token" as const, authTokenEnv: "ANTHROPIC_AUTH_TOKEN" }
         : { apiKeyEnv: "ANTHROPIC_API_KEY" }),
     };
@@ -227,14 +292,7 @@ async function configureLlm(project: UspConfig, socialAuth: UspConfig) {
             authSource: "anthropic-auth-token",
             authToken: assertNotCancel(await password({ message: "Claude setup-token result" })),
           }
-        : mode === "auth-env"
-          ? {
-              provider,
-              model: defaults.model,
-              authSource: "anthropic-auth-token",
-              authTokenEnv: "ANTHROPIC_AUTH_TOKEN",
-            }
-          : mode === "api-paste"
+        : mode === "api-paste"
             ? {
                 provider,
                 model: defaults.model,
@@ -298,6 +356,7 @@ async function configureLinkedIn(socialAuth: UspConfig, project: UspConfig) {
     [
       "Create a LinkedIn developer app and request member posting access.",
       "Developer apps: https://www.linkedin.com/developers/apps",
+      "Practical walkthrough: https://marcusnoble.co.uk/2025-02-02-posting-to-linkedin-via-the-api/",
       "Author URN should look like: urn:li:person:abc123",
     ].join("\n"),
     "LinkedIn credentials"
@@ -402,48 +461,62 @@ async function runInteractiveSetup() {
   const project = loadedProject.config;
 
   for (;;) {
-    const choice = assertNotCancel(
+    const section = assertNotCancel(
       await select({
         message: "Setup menu",
         options: [
-          { value: "llm", label: "LLM provider", hint: "Anthropic, OpenAI, Gemini" },
-          { value: "x", label: "X", hint: "API posting with media" },
-          { value: "linkedin", label: "LinkedIn", hint: "Personal profile posts" },
-          { value: "reddit", label: "Reddit", hint: "One subreddit target" },
-          { value: "telegram", label: "Telegram", hint: "Channel, group, or chat" },
-          { value: "exit", label: "Save and exit" },
+          { value: "llm", label: "LLM provider", hint: llmStatus(project, socialAuth) },
+          { value: "social", label: "Social auth", hint: socialSummary(project, socialAuth) },
+          { value: "exit", label: "Exit" },
         ],
       })
-    ) as "llm" | Platform | "exit";
+    ) as "llm" | "social" | "exit";
 
-    if (choice === "exit") {
+    if (section === "exit") {
       await writeLlmAuth({ llm: socialAuth.llm });
       await writeConfigFile(loadedProject.path, project);
-      outro(`Saved social auth under ~/.config/usp/social-auth\nSaved project config to ${loadedProject.path}`);
+      outro(`Social auth is saved under ~/.config/usp/social-auth\nProject config is saved at ${loadedProject.path}`);
       return;
     }
 
-    if (choice === "llm") {
+    if (section === "llm") {
       await configureLlm(project, socialAuth);
       await writeLlmAuth({ llm: socialAuth.llm });
       await writeConfigFile(loadedProject.path, project);
-      note("LLM settings saved. Pick another section or Save and exit.", "Saved");
+      note("LLM settings saved. Pick another section or Exit.", "Saved");
       continue;
     }
 
-    if (choice === "x") {
+    const platform = assertNotCancel(
+      await select({
+        message: "Social auth",
+        options: [
+          { value: "x", label: "X", hint: `API posting with media, ${statusHint(platformStatus(project, socialAuth, "x"))}` },
+          { value: "linkedin", label: "LinkedIn", hint: `Personal profile posts, ${statusHint(platformStatus(project, socialAuth, "linkedin"))}` },
+          { value: "reddit", label: "Reddit", hint: `One subreddit target, ${statusHint(platformStatus(project, socialAuth, "reddit"))}` },
+          { value: "telegram", label: "Telegram", hint: `Channel, group, or chat, ${statusHint(platformStatus(project, socialAuth, "telegram"))}` },
+          { value: "back", label: "Back" },
+        ],
+      })
+    ) as Platform | "back";
+
+    if (platform === "back") {
+      continue;
+    }
+
+    if (platform === "x") {
       await configureX(socialAuth, project);
-    } else if (choice === "linkedin") {
+    } else if (platform === "linkedin") {
       await configureLinkedIn(socialAuth, project);
-    } else if (choice === "reddit") {
+    } else if (platform === "reddit") {
       await configureReddit(socialAuth, project);
-    } else if (choice === "telegram") {
+    } else if (platform === "telegram") {
       await configureTelegram(socialAuth, project);
     }
 
-    await writePlatformSocialAuth(choice, ensureAccount(socialAuth, choice));
+    await writePlatformSocialAuth(platform, ensureAccount(socialAuth, platform));
     await writeConfigFile(loadedProject.path, project);
-    note(`${choice} settings saved. Pick another section or Save and exit.`, "Saved");
+    note(`${platform} settings saved. Pick another section or Exit.`, "Saved");
   }
 }
 

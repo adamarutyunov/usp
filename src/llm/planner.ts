@@ -29,7 +29,7 @@ function splitText(text: string, limit: number) {
   return chunks;
 }
 
-function normalizePlan(platform: Platform, raw: unknown, availableMedia: Set<string>): PlatformPlan {
+export function normalizePlan(platform: Platform, raw: unknown, availableMedia: Set<string>): PlatformPlan {
   const value = raw as { title?: unknown; units?: Array<{ text?: unknown; mediaRefs?: unknown }> };
   const sourceUnits = Array.isArray(value.units) ? value.units : [];
   const units = sourceUnits
@@ -62,6 +62,29 @@ function normalizePlan(platform: Platform, raw: unknown, availableMedia: Set<str
   };
 }
 
+export async function buildPlatformPlan({
+  input,
+  config,
+  target,
+  llm,
+}: {
+  input: MarkdownInput;
+  config: UspConfig;
+  target: { id: string; config: TargetConfig };
+  llm: LlmClient;
+}): Promise<PlatformPlan> {
+  const mediaIds = new Set(input.media.map((item) => item.id));
+  const platform = target.config.platform;
+  const prompt = buildPrompt({
+    input,
+    platform,
+    target: target.config,
+    customPrompt: target.config.prompt ?? config.prompts?.[platform],
+  });
+  const response = await llm.generate(prompt);
+  return normalizePlan(platform, parseJsonObject(response), mediaIds);
+}
+
 export async function buildPublishPlan({
   input,
   config,
@@ -73,7 +96,6 @@ export async function buildPublishPlan({
   targets: Array<{ id: string; config: TargetConfig }>;
   llm: LlmClient;
 }): Promise<PublishPlan> {
-  const mediaIds = new Set(input.media.map((item) => item.id));
   const platforms: PublishPlan["platforms"] = {};
 
   for (const target of targets) {
@@ -82,14 +104,12 @@ export async function buildPublishPlan({
       continue;
     }
 
-    const prompt = buildPrompt({
+    platforms[platform] = await buildPlatformPlan({
       input,
-      platform,
-      target: target.config,
-      customPrompt: target.config.prompt ?? config.prompts?.[platform],
+      config,
+      target,
+      llm,
     });
-    const response = await llm.generate(prompt);
-    platforms[platform] = normalizePlan(platform, parseJsonObject(response), mediaIds);
   }
 
   return {
