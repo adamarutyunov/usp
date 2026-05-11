@@ -16,6 +16,10 @@ export function getSocialAuthDir() {
   return path.join(os.homedir(), ".config", "usp", "social-auth");
 }
 
+export function getBrowserAuthDir() {
+  return path.join(os.homedir(), ".config", "usp", "browser-auth");
+}
+
 async function readYamlIfExists(filePath: string): Promise<JsonObject> {
   try {
     const raw = await fs.readFile(filePath, "utf8");

@@ -1,9 +1,12 @@
-import { publishTarget } from "../adapters/index.js";
 import { loadConfig } from "../config/config.js";
-import { readMarkdownInput } from "../content/markdown.js";
+import { MarkdownFileInputSource, MarkdownTextInputSource, StdinMarkdownInputSource } from "../input/markdown-source.js";
 import { createLlmClient } from "../llm/client.js";
-import { buildPlatformPlan, buildPublishPlan } from "../llm/planner.js";
-import type { Platform, PublishPlan, PublishTargetResult, TargetConfig } from "../types.js";
+import { JsonLlmProcessor } from "../llm/processor.js";
+import { PublishPipeline, formatError } from "../pipeline/pipeline.js";
+import { LlmPlatformPlanner } from "../pipeline/planner.js";
+import { AdapterPoster } from "../posting/poster.js";
+import { ConfigPromptProvider, parsePromptOverride } from "../prompt/provider.js";
+import type { PlatformPlan, PublishTargetResult } from "../types.js";
 import { createNoopSpinner, createSpinner, platformName, printError, printPlatformText, printWarning } from "../util/display.js";
 import { filterReadyTargets, resolveTargets } from "./targets.js";
 
@@ -28,52 +31,6 @@ function printHumanResults(results: PublishTargetResult[]) {
   }
 }
 
-function createEmptyPlan(input: Awaited<ReturnType<typeof readMarkdownInput>>): PublishPlan {
-  return {
-    source: {
-      inputPath: input.inputPath,
-      title: input.title,
-    },
-    media: input.media.map(({ id, alt, rawPath, mime, size }) => ({ id, alt, rawPath, mime, size })),
-    platforms: {},
-  };
-}
-
-function errorResult(
-  target: { id: string; config: TargetConfig },
-  error: unknown,
-  dryRun: boolean
-): PublishTargetResult {
-  return {
-    target: target.id,
-    platform: target.config.platform,
-    account: target.config.account,
-    dryRun,
-    ok: false,
-    error: formatError(error),
-    posts: [],
-  };
-}
-
-function formatError(error: unknown) {
-  if (!error || typeof error !== "object") {
-    return String(error);
-  }
-
-  const details = error as { message?: string; code?: number; data?: unknown; cause?: unknown };
-  const parts = [details.message ?? String(error)];
-  if (details.code) {
-    parts.push(`status=${details.code}`);
-  }
-  if (details.data) {
-    parts.push(`body=${JSON.stringify(details.data)}`);
-  }
-  if (details.cause && typeof details.cause !== "object") {
-    parts.push(`cause=${String(details.cause)}`);
-  }
-  return parts.join(" ");
-}
-
 function printPostSuccess(result: PublishTargetResult) {
   for (const post of result.posts) {
     if (post.url) {
@@ -87,13 +44,77 @@ function printPostSuccess(result: PublishTargetResult) {
   }
 }
 
+function createPipeline(
+  file: string | undefined,
+  options: { prompt?: string[]; inputText?: string; stdin?: boolean },
+  config: Awaited<ReturnType<typeof loadConfig>>
+) {
+  if (!options.stdin && !options.inputText && !file) {
+    throw new Error("Provide a Markdown file, --input, or --stdin.");
+  }
+  const input = options.stdin
+    ? new StdinMarkdownInputSource()
+    : options.inputText
+      ? new MarkdownTextInputSource(options.inputText)
+      : new MarkdownFileInputSource(file ?? "");
+  const llm = new JsonLlmProcessor(createLlmClient(config.llm));
+  const prompts = new ConfigPromptProvider((options.prompt ?? []).map(parsePromptOverride));
+  const planner = new LlmPlatformPlanner(prompts, llm);
+  return new PublishPipeline(input, planner, new AdapterPoster());
+}
+
+function createHumanHooks(json?: boolean) {
+  const makeSpinner = json ? createNoopSpinner : createSpinner;
+  let prepareSpinner: ReturnType<typeof makeSpinner> | undefined;
+  let postSpinner: ReturnType<typeof makeSpinner> | undefined;
+
+  return {
+    onPrepareStart(target: { config: { platform: Parameters<typeof platformName>[0] } }) {
+      prepareSpinner = makeSpinner(`Preparing text for ${platformName(target.config.platform)}...`);
+    },
+    onPrepareSuccess(target: { config: { platform: Parameters<typeof platformName>[0] } }, plan: PlatformPlan) {
+      const name = platformName(target.config.platform);
+      prepareSpinner?.succeed(`Prepared text for ${name}`);
+      if (!json) {
+        printPlatformText(target.config.platform, plan);
+      }
+    },
+    onPrepareError(target: { config: { platform: Parameters<typeof platformName>[0] } }, error: unknown) {
+      const name = platformName(target.config.platform);
+      prepareSpinner?.fail(`Error preparing text for ${name}`);
+      if (!json) {
+        printError(`Error preparing text for ${name}: ${formatError(error)}`);
+      }
+    },
+    onPostStart(target: { config: { platform: Parameters<typeof platformName>[0] } }) {
+      postSpinner = makeSpinner(`Posting to ${platformName(target.config.platform)}...`);
+    },
+    onPostSuccess(target: { config: { platform: Parameters<typeof platformName>[0] } }, result: PublishTargetResult) {
+      postSpinner?.succeed(`Successfully posted to ${platformName(target.config.platform)}`);
+      if (!json) {
+        printPostSuccess(result);
+      }
+    },
+    onPostError(target: { config: { platform: Parameters<typeof platformName>[0] } }, error: unknown) {
+      const name = platformName(target.config.platform);
+      postSpinner?.fail(`Error posting to ${name}`);
+      if (!json) {
+        printError(`Error posting to ${name}: ${formatError(error)}`);
+      }
+    },
+  };
+}
+
 export async function planCommand(
-  file: string,
+  file: string | undefined,
   options: {
     config?: string;
     profile?: string;
     target?: string[];
     set?: string[];
+    prompt?: string[];
+    inputText?: string;
+    stdin?: boolean;
   }
 ) {
   const config = await loadConfig({ configPath: options.config, overrides: options.set });
@@ -107,19 +128,24 @@ export async function planCommand(
   if (locallyReady.length === 0) {
     throw new Error("No configured targets to plan for. Run `usp setup` or pass a configured --target.");
   }
-  const input = await readMarkdownInput(file);
-  const llm = createLlmClient(config.llm);
-  const plan = await buildPublishPlan({ input, config, targets: locallyReady, llm });
+  const pipeline = createPipeline(file, options, config);
+  const { plan } = await pipeline.planOnly({
+    config,
+    targets: locallyReady,
+  });
   console.log(JSON.stringify(plan, null, 2));
 }
 
 export async function publishCommand(
-  file: string,
+  file: string | undefined,
   options: {
     config?: string;
     profile?: string;
     target?: string[];
     set?: string[];
+    prompt?: string[];
+    inputText?: string;
+    stdin?: boolean;
     dryRun?: boolean;
     json?: boolean;
   }
@@ -135,74 +161,13 @@ export async function publishCommand(
   if (locallyReady.length === 0) {
     throw new Error("No configured targets to publish to. Run `usp setup` or pass a configured --target.");
   }
-  const input = await readMarkdownInput(file);
-  const llm = createLlmClient(config.llm);
-  const plan = createEmptyPlan(input);
-  const results = [];
-  const plannedPlatforms = new Set<Platform>();
-  const makeSpinner = options.json ? createNoopSpinner : createSpinner;
-
-  for (const target of locallyReady) {
-    const platform = target.config.platform;
-    const name = platformName(platform);
-
-    if (!plannedPlatforms.has(platform)) {
-      const prepareSpinner = makeSpinner(`Preparing text for ${name}...`);
-      try {
-        plan.platforms[platform] = await buildPlatformPlan({ input, config, target, llm });
-        plannedPlatforms.add(platform);
-        prepareSpinner.succeed(`Prepared text for ${name}`);
-      } catch (error) {
-        prepareSpinner.fail(`Error preparing text for ${name}`);
-        if (!options.json) {
-          printError(`Error preparing text for ${name}: ${formatError(error)}`);
-        }
-        results.push(errorResult(target, error, Boolean(options.dryRun)));
-        continue;
-      }
-
-      if (!options.json) {
-        printPlatformText(platform, plan.platforms[platform]!);
-      }
-    }
-
-    if (options.dryRun) {
-      const result = await publishTarget({
-        targetId: target.id,
-        target: target.config,
-        config,
-        plan,
-        media: input.media,
-        dryRun: true,
-      });
-      results.push({ ...result, ok: true });
-      continue;
-    }
-
-    const postSpinner = makeSpinner(`Posting to ${name}...`);
-    try {
-      const result = await publishTarget({
-        targetId: target.id,
-        target: target.config,
-        config,
-        plan,
-        media: input.media,
-        dryRun: false,
-      });
-      const withStatus = { ...result, ok: true };
-      results.push(withStatus);
-      postSpinner.succeed(`Successfully posted to ${name}`);
-      if (!options.json) {
-        printPostSuccess(withStatus);
-      }
-    } catch (error) {
-      postSpinner.fail(`Error posting to ${name}`);
-      if (!options.json) {
-        printError(`Error posting to ${name}: ${formatError(error)}`);
-      }
-      results.push(errorResult(target, error, false));
-    }
-  }
+  const pipeline = createPipeline(file, options, config);
+  const { plan, results } = await pipeline.publish({
+    config,
+    targets: locallyReady,
+    dryRun: Boolean(options.dryRun),
+    hooks: createHumanHooks(options.json),
+  });
 
   if (options.json) {
     console.log(JSON.stringify({ plan, results }, null, 2));

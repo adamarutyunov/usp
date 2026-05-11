@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { readMarkdownInput } from "./markdown.js";
+import { readMarkdownInput, readMarkdownText } from "./markdown.js";
 
 describe("readMarkdownInput", () => {
   it("extracts normal markdown images in source order and loads local files", async () => {
@@ -24,5 +24,13 @@ describe("readMarkdownInput", () => {
     expect(input.media[0]?.alt).toBe("Alt text");
     expect(input.media[0]?.data?.byteLength).toBe(4);
     expect(input.bodyWithMediaPlaceholders).toContain('[media:img1 alt="Alt text"]');
+  });
+
+  it("supports direct markdown text input", async () => {
+    const input = await readMarkdownText("# Direct\n\nBody", "<text>", process.cwd());
+
+    expect(input.inputPath).toBe("<text>");
+    expect(input.title).toBe("Direct");
+    expect(input.body).toContain("Body");
   });
 });

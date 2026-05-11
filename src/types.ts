@@ -64,6 +64,17 @@ export type AccountsConfig = {
   telegram?: Record<string, TelegramAccount>;
 };
 
+export type BrowserAuthProfile = {
+  profileDir: string;
+  engine: "playwright";
+  browser: "chromium" | "chrome" | "msedge";
+  headless?: boolean;
+  loginUrl: string;
+  lastLoginAt: string;
+};
+
+export type BrowserAuthConfig = Partial<Record<Platform, Record<string, BrowserAuthProfile>>>;
+
 export type TargetConfig = {
   platform: Platform;
   account: string;
@@ -80,6 +91,7 @@ export type ProfileConfig = {
 export type UspConfig = {
   llm?: LlmConfig;
   accounts?: AccountsConfig;
+  browserAuth?: BrowserAuthConfig;
   targets?: Record<string, TargetConfig>;
   profiles?: Record<string, ProfileConfig>;
   prompts?: Partial<Record<Platform, string>>;

@@ -43,10 +43,15 @@ async function loadMedia(media: SourceMedia) {
   };
 }
 
-export async function readMarkdownInput(filePath: string): Promise<MarkdownInput> {
-  const inputPath = path.resolve(process.cwd(), filePath);
-  const baseDir = path.dirname(inputPath);
-  const body = await fs.readFile(inputPath, "utf8");
+async function parseMarkdownInput({
+  body,
+  inputPath,
+  baseDir,
+}: {
+  body: string;
+  inputPath: string;
+  baseDir: string;
+}): Promise<MarkdownInput> {
   const media: SourceMedia[] = [];
   let index = 0;
 
@@ -74,4 +79,21 @@ export async function readMarkdownInput(filePath: string): Promise<MarkdownInput
     bodyWithMediaPlaceholders,
     media: await Promise.all(media.map(loadMedia)),
   };
+}
+
+export async function readMarkdownInput(filePath: string): Promise<MarkdownInput> {
+  const inputPath = path.resolve(process.cwd(), filePath);
+  return parseMarkdownInput({
+    inputPath,
+    baseDir: path.dirname(inputPath),
+    body: await fs.readFile(inputPath, "utf8"),
+  });
+}
+
+export async function readMarkdownText(text: string, inputPath: string, baseDir: string): Promise<MarkdownInput> {
+  return parseMarkdownInput({
+    inputPath,
+    baseDir,
+    body: text,
+  });
 }
