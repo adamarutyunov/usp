@@ -46,16 +46,17 @@ function printPostSuccess(result: PublishTargetResult) {
 
 function createPipeline(
   file: string | undefined,
-  options: { prompt?: string[]; inputText?: string; stdin?: boolean },
+  options: { prompt?: string[]; input?: string; inputText?: string; stdin?: boolean },
   config: Awaited<ReturnType<typeof loadConfig>>
 ) {
-  if (!options.stdin && !options.inputText && !file) {
+  const inlineInput = options.inputText ?? options.input;
+  if (!options.stdin && !inlineInput && !file) {
     throw new Error("Provide a Markdown file, --input, or --stdin.");
   }
   const input = options.stdin
     ? new StdinMarkdownInputSource()
-    : options.inputText
-      ? new MarkdownTextInputSource(options.inputText)
+    : inlineInput
+      ? new MarkdownTextInputSource(inlineInput)
       : new MarkdownFileInputSource(file ?? "");
   const llm = new JsonLlmProcessor(createLlmClient(config.llm));
   const prompts = new ConfigPromptProvider((options.prompt ?? []).map(parsePromptOverride));
@@ -113,6 +114,7 @@ export async function planCommand(
     target?: string[];
     set?: string[];
     prompt?: string[];
+    input?: string;
     inputText?: string;
     stdin?: boolean;
   }
@@ -144,6 +146,7 @@ export async function publishCommand(
     target?: string[];
     set?: string[];
     prompt?: string[];
+    input?: string;
     inputText?: string;
     stdin?: boolean;
     dryRun?: boolean;

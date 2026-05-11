@@ -12,7 +12,7 @@ const program = new Command();
 
 program
   .name("usp")
-  .description("Ultimate Social Poster: publish Markdown to X, LinkedIn, Reddit, and Telegram.")
+  .description("Ultimate Social Poster: publish Markdown to X, LinkedIn, Reddit, Telegram, Aegea, Bluesky, Mastodon, and Discord.")
   .version("0.1.0");
 
 program
@@ -24,7 +24,7 @@ program
 program
   .command("setup")
   .description("Open the guided terminal setup wizard.")
-  .option("--platform <platform>", "x, linkedin, reddit, or telegram")
+  .option("--platform <platform>", "x, linkedin, reddit, telegram, aegea, bluesky, mastodon, or discord")
   .option("--account <name>", "Internal account id for scripted setup", "main")
   .option("-v, --value <key=value>", "Account field value. Repeatable.", collect, [])
   .action((options) => run(() => setupCommand(options)));
@@ -32,7 +32,7 @@ program
 program
   .command("account:set")
   .description("Set account fields in the global config.")
-  .argument("<platform>", "x, linkedin, reddit, or telegram")
+  .argument("<platform>", "x, linkedin, reddit, telegram, aegea, bluesky, mastodon, or discord")
   .argument("<name>", "Account name")
   .option("-v, --value <key=value>", "Account field value. Repeatable.", collect, [])
   .action((platform: Platform, name: string, options) => run(() => accountSetCommand(platform, name, options)));

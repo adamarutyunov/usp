@@ -10,6 +10,10 @@ profiles:
       - linkedin-me
       - reddit-release
       - telegram-channel
+      - aegea-blog
+      - bluesky-main
+      - mastodon-main
+      - discord-main
 
 targets:
   x-main:
@@ -29,6 +33,22 @@ targets:
     platform: telegram
     account: main
     chatId: $TELEGRAM_CHAT_ID
+
+  aegea-blog:
+    platform: aegea
+    account: main
+
+  bluesky-main:
+    platform: bluesky
+    account: main
+
+  mastodon-main:
+    platform: mastodon
+    account: main
+
+  discord-main:
+    platform: discord
+    account: main
 
 accounts:
   x:
@@ -54,3 +74,25 @@ accounts:
   telegram:
     main:
       botTokenEnv: TELEGRAM_BOT_TOKEN
+
+  aegea:
+    main:
+      baseUrl: http://localhost/
+      passwordEnv: AEGEA_PASSWORD
+
+  bluesky:
+    main:
+      identifierEnv: BLUESKY_IDENTIFIER
+      appPasswordEnv: BLUESKY_APP_PASSWORD
+      pdsUrl: https://bsky.social
+
+  mastodon:
+    main:
+      instanceUrl: https://mastodon.social
+      accessTokenEnv: MASTODON_ACCESS_TOKEN
+      visibility: public
+
+  discord:
+    main:
+      webhookUrlEnv: DISCORD_WEBHOOK_URL
+      username: Ultimate Social Poster

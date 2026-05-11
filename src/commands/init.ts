@@ -9,7 +9,16 @@ export const SAMPLE_CONFIG: UspConfig = {
   },
   profiles: {
     default: {
-      targets: ["x-main", "linkedin-me", "reddit-release", "telegram-channel"],
+      targets: [
+        "x-main",
+        "linkedin-me",
+        "reddit-release",
+        "telegram-channel",
+        "aegea-blog",
+        "bluesky-main",
+        "mastodon-main",
+        "discord-main",
+      ],
     },
   },
   targets: {
@@ -30,6 +39,22 @@ export const SAMPLE_CONFIG: UspConfig = {
       platform: "telegram",
       account: "main",
       chatId: "$TELEGRAM_CHAT_ID",
+    },
+    "aegea-blog": {
+      platform: "aegea",
+      account: "main",
+    },
+    "bluesky-main": {
+      platform: "bluesky",
+      account: "main",
+    },
+    "mastodon-main": {
+      platform: "mastodon",
+      account: "main",
+    },
+    "discord-main": {
+      platform: "discord",
+      account: "main",
     },
   },
 };

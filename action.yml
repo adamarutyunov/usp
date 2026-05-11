@@ -1,5 +1,5 @@
 name: Ultimate Social Poster
-description: Publish a Markdown file to X, LinkedIn, Reddit, and Telegram through the usp CLI.
+description: Publish a Markdown file to social destinations through the usp CLI.
 author: Adam Arutyunov
 
 inputs:

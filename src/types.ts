@@ -1,4 +1,12 @@
-export type Platform = "x" | "linkedin" | "reddit" | "telegram";
+export type Platform =
+  | "x"
+  | "linkedin"
+  | "reddit"
+  | "telegram"
+  | "aegea"
+  | "bluesky"
+  | "mastodon"
+  | "discord";
 
 export type LlmProvider = "gemini" | "openai" | "anthropic";
 
@@ -57,11 +65,44 @@ export type TelegramAccount = {
   chatId?: string;
 };
 
+export type AegeaAccount = {
+  baseUrl?: string;
+  password?: SecretValue;
+  passwordEnv?: string;
+};
+
+export type BlueskyAccount = {
+  identifier?: string;
+  identifierEnv?: string;
+  appPassword?: SecretValue;
+  appPasswordEnv?: string;
+  pdsUrl?: string;
+};
+
+export type MastodonAccount = {
+  instanceUrl?: string;
+  accessToken?: SecretValue;
+  accessTokenEnv?: string;
+  visibility?: "public" | "unlisted" | "private" | "direct";
+};
+
+export type DiscordAccount = {
+  webhookUrl?: SecretValue;
+  webhookUrlEnv?: string;
+  threadId?: string;
+  username?: string;
+  avatarUrl?: string;
+};
+
 export type AccountsConfig = {
   x?: Record<string, XAccount>;
   linkedin?: Record<string, LinkedInAccount>;
   reddit?: Record<string, RedditAccount>;
   telegram?: Record<string, TelegramAccount>;
+  aegea?: Record<string, AegeaAccount>;
+  bluesky?: Record<string, BlueskyAccount>;
+  mastodon?: Record<string, MastodonAccount>;
+  discord?: Record<string, DiscordAccount>;
 };
 
 export type BrowserAuthProfile = {
@@ -81,6 +122,7 @@ export type TargetConfig = {
   prompt?: string;
   subreddit?: string;
   chatId?: string;
+  threadId?: string;
   mode?: "api";
 };
 

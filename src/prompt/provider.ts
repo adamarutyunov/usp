@@ -15,7 +15,7 @@ export function parsePromptOverride(value: string): PromptOverride {
   if (!rawPlatform || !rawModeOrText) {
     throw new Error(`Invalid --prompt "${value}". Expected platform[:append|replace]:text.`);
   }
-  if (!["x", "linkedin", "reddit", "telegram"].includes(rawPlatform)) {
+  if (!["x", "linkedin", "reddit", "telegram", "aegea", "bluesky", "mastodon", "discord"].includes(rawPlatform)) {
     throw new Error(`Invalid --prompt platform "${rawPlatform}".`);
   }
   const hasExplicitMode = rawModeOrText === "append" || rawModeOrText === "replace";

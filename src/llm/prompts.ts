@@ -40,6 +40,35 @@ export const DEFAULT_PLATFORM_PROMPTS: Record<Platform, string> = {
     "Each unit must be at most 4096 characters.",
     "Keep links and concrete details intact.",
   ].join("\n"),
+  aegea: [
+    ...SHARED_RULES,
+    "Platform: Aegea blog.",
+    "Create a blog post title and body units.",
+    "Preserve the source structure and image positions: make a new unit whenever an image should appear after that text.",
+    "Attach each image to the unit after which it should be rendered in the Aegea post body.",
+    "Do not shorten the post unless the source is repetitive.",
+  ].join("\n"),
+  bluesky: [
+    ...SHARED_RULES,
+    "Platform: Bluesky.",
+    "Create one post or a concise thread. Each unit must be at most 300 characters.",
+    "Attach images to the specific post they support, preserving source order.",
+    "Avoid hashtags unless they are clearly useful or already present.",
+  ].join("\n"),
+  mastodon: [
+    ...SHARED_RULES,
+    "Platform: Mastodon.",
+    "Create one status or a concise reply thread. Each unit should be at most 500 characters unless the source needs more.",
+    "Attach images to the specific status they support, preserving source order.",
+    "Keep it plain, useful, and portable across Mastodon instances.",
+  ].join("\n"),
+  discord: [
+    ...SHARED_RULES,
+    "Platform: Discord channel.",
+    "Create direct channel copy. Multiple units are allowed when images should be sent as separate messages.",
+    "Each unit must be at most 2000 characters.",
+    "Preserve links, code snippets, and concrete details.",
+  ].join("\n"),
 };
 
 export function buildPrompt({

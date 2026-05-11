@@ -25,6 +25,10 @@ const PLATFORM_ACCOUNT_NAMES: Record<Platform, string> = {
   linkedin: "me",
   reddit: "main",
   telegram: "main",
+  aegea: "main",
+  bluesky: "main",
+  mastodon: "main",
+  discord: "main",
 };
 
 const TARGET_IDS: Record<Platform, string> = {
@@ -32,6 +36,10 @@ const TARGET_IDS: Record<Platform, string> = {
   linkedin: "linkedin-me",
   reddit: "reddit-release",
   telegram: "telegram-channel",
+  aegea: "aegea-blog",
+  bluesky: "bluesky-main",
+  mastodon: "mastodon-main",
+  discord: "discord-main",
 };
 
 const LLM_DEFAULTS: Record<LlmProvider, { model: string; env: string; keyUrl: string; label: string }> = {
@@ -55,7 +63,16 @@ const LLM_DEFAULTS: Record<LlmProvider, { model: string; env: string; keyUrl: st
   },
 };
 
-const SOCIAL_PLATFORMS: Platform[] = ["x", "linkedin", "reddit", "telegram"];
+const SOCIAL_PLATFORMS: Platform[] = [
+  "x",
+  "linkedin",
+  "reddit",
+  "telegram",
+  "aegea",
+  "bluesky",
+  "mastodon",
+  "discord",
+];
 
 function assertNotCancel<T>(value: T | symbol): T {
   if (isCancel(value)) {
@@ -94,8 +111,11 @@ function applyValues(account: Record<string, unknown>, values: string[] = []) {
   }
 }
 
-async function writePlatformSocialAuth(platform: Platform, account: Record<string, unknown>) {
-  const accountName = PLATFORM_ACCOUNT_NAMES[platform];
+async function writePlatformSocialAuth(
+  platform: Platform,
+  account: Record<string, unknown>,
+  accountName = PLATFORM_ACCOUNT_NAMES[platform]
+) {
   return writeSocialAuthConfig(`${platform}.yml`, {
     accounts: {
       [platform]: {
@@ -186,7 +206,23 @@ function platformStatus(project: UspConfig, socialAuth: UspConfig, platform: Pla
       : "not set";
   }
 
-  return account && hasValue(account.botToken) && hasValue(target?.chatId) ? "set" : "not set";
+  if (platform === "telegram") {
+    return account && hasValue(account.botToken) && hasValue(target?.chatId) ? "set" : "not set";
+  }
+
+  if (platform === "aegea") {
+    return account && hasValue(account.baseUrl) && hasValue(account.password) ? "set" : "not set";
+  }
+
+  if (platform === "bluesky") {
+    return account && hasValue(account.identifier) && hasValue(account.appPassword) ? "set" : "not set";
+  }
+
+  if (platform === "mastodon") {
+    return account && hasValue(account.instanceUrl) && hasValue(account.accessToken) ? "set" : "not set";
+  }
+
+  return account && hasValue(account.webhookUrl) ? "set" : "not set";
 }
 
 function statusHint(status: string) {
@@ -449,6 +485,113 @@ async function configureTelegram(socialAuth: UspConfig, project: UspConfig) {
   );
 }
 
+async function configureAegea(socialAuth: UspConfig, project: UspConfig) {
+  ensureTarget(project, "aegea");
+  note(
+    [
+      "Aegea posts use the normal author password flow.",
+      "Local Docker default URL: http://localhost/",
+      "The connector uploads images through Aegea, then saves and publishes the post.",
+    ].join("\n"),
+    "Aegea credentials"
+  );
+
+  const account = ensureAccount(socialAuth, "aegea");
+  account.baseUrl = assertNotCancel(
+    await text({
+      message: "Aegea base URL",
+      placeholder: "http://localhost/",
+      defaultValue: String(account.baseUrl ?? "http://localhost/"),
+    })
+  );
+  account.password = assertNotCancel(await password({ message: "Aegea author password" }));
+}
+
+async function configureBluesky(socialAuth: UspConfig, project: UspConfig) {
+  ensureTarget(project, "bluesky");
+  note(
+    [
+      "Create a Bluesky app password, not your main account password.",
+      "App passwords: https://bsky.app/settings/app-passwords",
+      "Default PDS URL: https://bsky.social",
+    ].join("\n"),
+    "Bluesky credentials"
+  );
+
+  const account = ensureAccount(socialAuth, "bluesky");
+  account.identifier = assertNotCancel(
+    await text({
+      message: "Bluesky handle or email",
+      placeholder: "you.bsky.social",
+      defaultValue: typeof account.identifier === "string" ? account.identifier : undefined,
+    })
+  );
+  account.appPassword = assertNotCancel(await password({ message: "Bluesky app password" }));
+  account.pdsUrl = assertNotCancel(
+    await text({
+      message: "Bluesky PDS URL",
+      placeholder: "https://bsky.social",
+      defaultValue: String(account.pdsUrl ?? "https://bsky.social"),
+    })
+  );
+}
+
+async function configureMastodon(socialAuth: UspConfig, project: UspConfig) {
+  ensureTarget(project, "mastodon");
+  note(
+    [
+      "Create an access token in your Mastodon instance preferences.",
+      "Required scopes: write:statuses and write:media.",
+      "API docs: https://docs.joinmastodon.org/methods/statuses/",
+    ].join("\n"),
+    "Mastodon credentials"
+  );
+
+  const account = ensureAccount(socialAuth, "mastodon");
+  account.instanceUrl = assertNotCancel(
+    await text({
+      message: "Mastodon instance URL",
+      placeholder: "https://mastodon.social",
+      defaultValue: String(account.instanceUrl ?? "https://mastodon.social"),
+    })
+  );
+  account.accessToken = assertNotCancel(await password({ message: "Mastodon access token" }));
+  account.visibility = assertNotCancel(
+    await select({
+      message: "Mastodon visibility",
+      initialValue: account.visibility ?? "public",
+      options: [
+        { value: "public", label: "public", hint: "Visible on public timelines" },
+        { value: "unlisted", label: "unlisted", hint: "Public, but not listed" },
+        { value: "private", label: "private", hint: "Followers only" },
+        { value: "direct", label: "direct", hint: "Mentioned users only" },
+      ],
+    })
+  ) as "public" | "unlisted" | "private" | "direct";
+}
+
+async function configureDiscord(socialAuth: UspConfig, project: UspConfig) {
+  ensureTarget(project, "discord");
+  note(
+    [
+      "Discord incoming webhooks post into one channel without a bot token.",
+      "In Discord: Channel settings -> Integrations -> Webhooks -> New Webhook -> Copy Webhook URL.",
+      "Webhook docs: https://docs.discord.com/developers/resources/webhook#execute-webhook",
+    ].join("\n"),
+    "Discord credentials"
+  );
+
+  const account = ensureAccount(socialAuth, "discord");
+  account.webhookUrl = assertNotCancel(await password({ message: "Discord webhook URL" }));
+  account.username = assertNotCancel(
+    await text({
+      message: "Webhook display name",
+      placeholder: "Ultimate Social Poster",
+      defaultValue: typeof account.username === "string" ? account.username : "Ultimate Social Poster",
+    })
+  );
+}
+
 async function runInteractiveSetup() {
   intro("usp setup");
   const projectPath = await ensureProjectConfig();
@@ -495,6 +638,10 @@ async function runInteractiveSetup() {
           { value: "linkedin", label: "LinkedIn", hint: `Personal profile posts, ${statusHint(platformStatus(project, socialAuth, "linkedin"))}` },
           { value: "reddit", label: "Reddit", hint: `One subreddit target, ${statusHint(platformStatus(project, socialAuth, "reddit"))}` },
           { value: "telegram", label: "Telegram", hint: `Channel, group, or chat, ${statusHint(platformStatus(project, socialAuth, "telegram"))}` },
+          { value: "aegea", label: "Aegea", hint: `Blog post via password login, ${statusHint(platformStatus(project, socialAuth, "aegea"))}` },
+          { value: "bluesky", label: "Bluesky", hint: `API posts and threads, ${statusHint(platformStatus(project, socialAuth, "bluesky"))}` },
+          { value: "mastodon", label: "Mastodon", hint: `Instance API posts and threads, ${statusHint(platformStatus(project, socialAuth, "mastodon"))}` },
+          { value: "discord", label: "Discord", hint: `Incoming webhook, ${statusHint(platformStatus(project, socialAuth, "discord"))}` },
           { value: "back", label: "Back" },
         ],
       })
@@ -512,6 +659,14 @@ async function runInteractiveSetup() {
       await configureReddit(socialAuth, project);
     } else if (platform === "telegram") {
       await configureTelegram(socialAuth, project);
+    } else if (platform === "aegea") {
+      await configureAegea(socialAuth, project);
+    } else if (platform === "bluesky") {
+      await configureBluesky(socialAuth, project);
+    } else if (platform === "mastodon") {
+      await configureMastodon(socialAuth, project);
+    } else if (platform === "discord") {
+      await configureDiscord(socialAuth, project);
     }
 
     await writePlatformSocialAuth(platform, ensureAccount(socialAuth, platform));
@@ -523,14 +678,14 @@ async function runInteractiveSetup() {
 export async function setupCommand(options: { platform?: Platform; account?: string; value?: string[] } = {}) {
   if (options.platform) {
     await ensureProjectConfig();
-    if (!["x", "linkedin", "reddit", "telegram"].includes(options.platform)) {
+    if (!["x", "linkedin", "reddit", "telegram", "aegea", "bluesky", "mastodon", "discord"].includes(options.platform)) {
       throw new Error(`Unsupported platform: ${options.platform}`);
     }
     const config = await loadSocialAuthConfig();
     const name = options.account ?? PLATFORM_ACCOUNT_NAMES[options.platform];
     const account = ensureAccount(config, options.platform, name);
     applyValues(account, options.value);
-    const path = await writePlatformSocialAuth(options.platform, account);
+    const path = await writePlatformSocialAuth(options.platform, account, name);
     console.log(`Saved ${options.platform}.${name} credentials to ${path}`);
     return;
   }

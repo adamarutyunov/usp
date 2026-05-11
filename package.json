@@ -1,7 +1,7 @@
 {
   "name": "usp",
   "version": "0.1.0",
-  "description": "Ultimate Social Poster CLI for publishing Markdown posts to X, LinkedIn, Reddit, and Telegram.",
+  "description": "Ultimate Social Poster CLI for publishing Markdown posts to X, LinkedIn, Reddit, Telegram, Aegea, Bluesky, Mastodon, and Discord.",
   "type": "module",
   "bin": {
     "usp": "dist/cli.js"
@@ -26,7 +26,10 @@
     "x",
     "linkedin",
     "reddit",
-    "telegram"
+    "telegram",
+    "bluesky",
+    "mastodon",
+    "discord"
   ],
   "author": "Adam Arutyunov",
   "license": "MIT",

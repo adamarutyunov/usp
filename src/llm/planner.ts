@@ -10,6 +10,14 @@ import { parseJsonObject } from "../util/json.js";
 import type { LlmClient } from "./client.js";
 import { buildPrompt } from "./prompts.js";
 
+const PLATFORM_TEXT_LIMITS: Partial<Record<Platform, number>> = {
+  x: 280,
+  bluesky: 300,
+  mastodon: 500,
+  telegram: 4096,
+  discord: 2000,
+};
+
 function splitText(text: string, limit: number) {
   if (text.length <= limit) {
     return [text];
@@ -41,7 +49,7 @@ export function normalizePlan(platform: Platform, raw: unknown, availableMedia: 
     }))
     .filter((unit) => unit.text || (unit.mediaRefs?.length ?? 0) > 0);
 
-  const limit = platform === "x" ? 280 : platform === "telegram" ? 4096 : undefined;
+  const limit = PLATFORM_TEXT_LIMITS[platform];
   const limitedUnits = limit
     ? units.flatMap((unit) => {
         const chunks = splitText(unit.text, limit);

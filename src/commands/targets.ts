@@ -49,6 +49,51 @@ export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
       : { ready: false, reason: `missing Reddit credentials or subreddit for account "${target.account}"` };
   }
 
+  if (target.platform === "aegea") {
+    const account = config.accounts?.aegea?.[target.account];
+    if (!account) {
+      return { ready: false, reason: `missing Aegea account "${target.account}"` };
+    }
+    const password = optionalSecret(account.password, account.passwordEnv, "AEGEA_PASSWORD");
+    return password && hasValue(account.baseUrl)
+      ? { ready: true }
+      : { ready: false, reason: `missing Aegea baseUrl or password for account "${target.account}"` };
+  }
+
+  if (target.platform === "bluesky") {
+    const account = config.accounts?.bluesky?.[target.account];
+    if (!account) {
+      return { ready: false, reason: `missing Bluesky account "${target.account}"` };
+    }
+    const identifier = optionalSecret(account.identifier, account.identifierEnv, "BLUESKY_IDENTIFIER");
+    const appPassword = optionalSecret(account.appPassword, account.appPasswordEnv, "BLUESKY_APP_PASSWORD");
+    return identifier && appPassword
+      ? { ready: true }
+      : { ready: false, reason: `missing Bluesky identifier or app password for account "${target.account}"` };
+  }
+
+  if (target.platform === "mastodon") {
+    const account = config.accounts?.mastodon?.[target.account];
+    if (!account) {
+      return { ready: false, reason: `missing Mastodon account "${target.account}"` };
+    }
+    const accessToken = optionalSecret(account.accessToken, account.accessTokenEnv, "MASTODON_ACCESS_TOKEN");
+    return accessToken && hasValue(account.instanceUrl || process.env.MASTODON_INSTANCE_URL)
+      ? { ready: true }
+      : { ready: false, reason: `missing Mastodon instance URL or access token for account "${target.account}"` };
+  }
+
+  if (target.platform === "discord") {
+    const account = config.accounts?.discord?.[target.account];
+    if (!account) {
+      return { ready: false, reason: `missing Discord account "${target.account}"` };
+    }
+    const webhookUrl = optionalSecret(account.webhookUrl, account.webhookUrlEnv, "DISCORD_WEBHOOK_URL");
+    return webhookUrl
+      ? { ready: true }
+      : { ready: false, reason: `missing Discord webhook URL for account "${target.account}"` };
+  }
+
   const account = config.accounts?.telegram?.[target.account];
   if (!account) {
     return { ready: false, reason: `missing Telegram account "${target.account}"` };

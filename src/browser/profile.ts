@@ -13,6 +13,10 @@ export const DEFAULT_BROWSER_ACCOUNTS: Record<Platform, string> = {
   linkedin: "me",
   reddit: "main",
   telegram: "main",
+  aegea: "main",
+  bluesky: "main",
+  mastodon: "main",
+  discord: "main",
 };
 
 export const LOGIN_URLS: Record<Platform, string> = {
@@ -20,6 +24,10 @@ export const LOGIN_URLS: Record<Platform, string> = {
   linkedin: "https://www.linkedin.com/feed/",
   reddit: "https://www.reddit.com/",
   telegram: "https://web.telegram.org/a/",
+  aegea: "http://localhost/",
+  bluesky: "https://bsky.app/",
+  mastodon: "https://mastodon.social/",
+  discord: "https://discord.com/channels/@me",
 };
 
 function cleanPathPart(value: string) {

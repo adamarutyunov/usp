@@ -27,6 +27,26 @@ describe("prompt provider", () => {
       mode: "replace",
       text: "Only this",
     });
+    expect(parsePromptOverride("aegea:Only this")).toEqual({
+      platform: "aegea",
+      mode: "replace",
+      text: "Only this",
+    });
+    expect(parsePromptOverride("bluesky:Only this")).toEqual({
+      platform: "bluesky",
+      mode: "replace",
+      text: "Only this",
+    });
+    expect(parsePromptOverride("mastodon:Only this")).toEqual({
+      platform: "mastodon",
+      mode: "replace",
+      text: "Only this",
+    });
+    expect(parsePromptOverride("discord:Only this")).toEqual({
+      platform: "discord",
+      mode: "replace",
+      text: "Only this",
+    });
   });
 
   it("appends CLI prompt text to the default prompt", () => {

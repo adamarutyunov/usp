@@ -69,6 +69,105 @@ describe("resolveTargets", () => {
     });
   });
 
+  it("keeps configured Aegea targets", () => {
+    const readyConfig: UspConfig = {
+      targets: {
+        "aegea-blog": {
+          platform: "aegea",
+          account: "main",
+        },
+      },
+      accounts: {
+        aegea: {
+          main: {
+            baseUrl: "http://localhost/",
+            password: "aegea",
+          },
+        },
+      },
+    };
+    const targets = resolveTargets(readyConfig, { targets: ["aegea-blog"] });
+
+    expect(filterReadyTargets(readyConfig, targets)).toMatchObject({
+      ready: [{ id: "aegea-blog" }],
+      skipped: [],
+    });
+  });
+
+  it("keeps configured Bluesky targets", () => {
+    const readyConfig: UspConfig = {
+      targets: {
+        "bluesky-main": {
+          platform: "bluesky",
+          account: "main",
+        },
+      },
+      accounts: {
+        bluesky: {
+          main: {
+            identifier: "you.bsky.social",
+            appPassword: "app-password",
+          },
+        },
+      },
+    };
+    const targets = resolveTargets(readyConfig, { targets: ["bluesky-main"] });
+
+    expect(filterReadyTargets(readyConfig, targets)).toMatchObject({
+      ready: [{ id: "bluesky-main" }],
+      skipped: [],
+    });
+  });
+
+  it("keeps configured Mastodon targets", () => {
+    const readyConfig: UspConfig = {
+      targets: {
+        "mastodon-main": {
+          platform: "mastodon",
+          account: "main",
+        },
+      },
+      accounts: {
+        mastodon: {
+          main: {
+            instanceUrl: "https://mastodon.social",
+            accessToken: "token",
+          },
+        },
+      },
+    };
+    const targets = resolveTargets(readyConfig, { targets: ["mastodon-main"] });
+
+    expect(filterReadyTargets(readyConfig, targets)).toMatchObject({
+      ready: [{ id: "mastodon-main" }],
+      skipped: [],
+    });
+  });
+
+  it("keeps configured Discord targets", () => {
+    const readyConfig: UspConfig = {
+      targets: {
+        "discord-main": {
+          platform: "discord",
+          account: "main",
+        },
+      },
+      accounts: {
+        discord: {
+          main: {
+            webhookUrl: "https://discord.com/api/webhooks/123/token",
+          },
+        },
+      },
+    };
+    const targets = resolveTargets(readyConfig, { targets: ["discord-main"] });
+
+    expect(filterReadyTargets(readyConfig, targets)).toMatchObject({
+      ready: [{ id: "discord-main" }],
+      skipped: [],
+    });
+  });
+
   it("throws for explicitly requested unconfigured targets", () => {
     const targets = resolveTargets(config, { targets: ["x-main"] });
 
