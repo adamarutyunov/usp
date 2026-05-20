@@ -69,6 +69,13 @@ export const DEFAULT_PLATFORM_PROMPTS: Record<Platform, string> = {
     "Each unit must be at most 2000 characters.",
     "Preserve links, code snippets, and concrete details.",
   ].join("\n"),
+  threads: [
+    ...SHARED_RULES,
+    "Platform: Threads.",
+    "Create one post or a concise reply chain. Each unit must be at most 500 characters.",
+    "Attach remote images or videos to the specific post they support. Do not attach local-only media.",
+    "Avoid hashtags unless they are clearly useful or already present.",
+  ].join("\n"),
 };
 
 export function buildPrompt({

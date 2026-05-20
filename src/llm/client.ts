@@ -1,7 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import type { LlmConfig, LlmProvider } from "../types.js";
 import { optionalSecret, resolveSecret } from "../util/secrets.js";
-import { readCodexOpenAiCredential } from "./auth.js";
 
 export type LlmClient = {
   provider: LlmProvider;
@@ -13,7 +12,7 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
   const provider = config.provider ?? "gemini";
 
   if (provider === "gemini") {
-    const apiKey = resolveSecret(config.apiKey, config.apiKeyEnv, "Gemini API key", "GEMINI_API_KEY");
+    const apiKey = resolveSecret(config.apiKey, "Gemini API key");
     const model = config.model ?? "gemini-2.5-flash-lite";
     const ai = new GoogleGenAI({ apiKey });
     return {
@@ -43,17 +42,11 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
       provider,
       model,
       async generate(prompt) {
-        const credential =
-          config.authSource === "codex"
-            ? await readCodexOpenAiCredential()
-            : {
-                kind: "apiKey" as const,
-                value: resolveSecret(config.apiKey, config.apiKeyEnv, "OpenAI API key", "OPENAI_API_KEY"),
-              };
+        const apiKey = resolveSecret(config.apiKey, "OpenAI API key");
         const response = await fetch("https://api.openai.com/v1/responses", {
           method: "POST",
           headers: {
-            authorization: `Bearer ${credential.value}`,
+            authorization: `Bearer ${apiKey}`,
             "content-type": "application/json",
           },
           body: JSON.stringify({
@@ -81,12 +74,12 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
   }
 
   if (provider === "anthropic") {
-    const apiKey = optionalSecret(config.apiKey, config.apiKeyEnv, "ANTHROPIC_API_KEY");
-    const authToken = optionalSecret(config.authToken, config.authTokenEnv, "ANTHROPIC_AUTH_TOKEN");
+    const apiKey = optionalSecret(config.apiKey);
+    const authToken = optionalSecret(config.authToken);
     const model = config.model ?? "claude-sonnet-4-5";
     if (!apiKey && !authToken) {
       throw new Error(
-        "Missing Anthropic API key or auth token. Provide ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, or paste a Claude setup-token result in usp setup."
+        "Missing Anthropic API key or auth token. Run usp setup to store one."
       );
     }
     return {

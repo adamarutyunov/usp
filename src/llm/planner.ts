@@ -16,6 +16,7 @@ const PLATFORM_TEXT_LIMITS: Partial<Record<Platform, number>> = {
   mastodon: 500,
   telegram: 4096,
   discord: 2000,
+  threads: 500,
 };
 
 function splitText(text: string, limit: number) {

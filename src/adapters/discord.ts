@@ -110,12 +110,7 @@ export async function publishToDiscord(context: PublishContext) {
     throw new Error(`Missing Discord account "${context.target.account}".`);
   }
 
-  const webhookUrl = resolveSecret(
-    account.webhookUrl,
-    account.webhookUrlEnv,
-    "Discord webhook URL",
-    "DISCORD_WEBHOOK_URL"
-  );
+  const webhookUrl = resolveSecret(account.webhookUrl, "Discord webhook URL");
   const threadId = context.target.threadId || account.threadId;
   const posts = [];
 

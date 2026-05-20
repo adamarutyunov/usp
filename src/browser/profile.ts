@@ -17,6 +17,7 @@ export const DEFAULT_BROWSER_ACCOUNTS: Record<Platform, string> = {
   bluesky: "main",
   mastodon: "main",
   discord: "main",
+  threads: "main",
 };
 
 export const LOGIN_URLS: Record<Platform, string> = {
@@ -28,6 +29,7 @@ export const LOGIN_URLS: Record<Platform, string> = {
   bluesky: "https://bsky.app/",
   mastodon: "https://mastodon.social/",
   discord: "https://discord.com/channels/@me",
+  threads: "https://www.threads.net/",
 };
 
 function cleanPathPart(value: string) {

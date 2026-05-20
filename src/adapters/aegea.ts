@@ -240,7 +240,7 @@ export async function publishToAegea(context: PublishContext) {
   }
 
   const title = (context.plan.title || context.plan.units[0]?.text.split("\n")[0] || "Post").trim().slice(0, 255);
-  const baseUrl = account.baseUrl ?? process.env.AEGEA_BASE_URL ?? "http://localhost/";
+  const baseUrl = account.baseUrl ?? "http://localhost/";
   const uploadedNamesByMediaId = new Map<string, string>();
 
   if (context.dryRun) {
@@ -258,7 +258,7 @@ export async function publishToAegea(context: PublishContext) {
     };
   }
 
-  const password = resolveSecret(account.password, account.passwordEnv, "Aegea password", "AEGEA_PASSWORD");
+  const password = resolveSecret(account.password, "Aegea password");
   const client = new AegeaClient(baseUrl, password);
   await client.login();
   const form = await client.newPostForm();

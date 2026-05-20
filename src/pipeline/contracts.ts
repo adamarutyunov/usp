@@ -60,6 +60,9 @@ export abstract class Poster {
 
 export type PipelineHooks = {
   onSkip?(target: TargetRef, reason: string): void;
+  onPreviewDirectory?(dir: string): void;
+  onPreviewReuse?(target: TargetRef): void;
+  onPreviewWrite?(target: TargetRef, filePath: string): void;
   onPrepareStart?(target: TargetRef): void;
   onPrepareSuccess?(target: TargetRef, plan: PlatformPlan): void;
   onPrepareError?(target: TargetRef, error: unknown): void;

@@ -15,11 +15,10 @@ type MastodonStatus = {
 };
 
 function normalizeInstanceUrl(value: string | undefined) {
-  const url = value ?? process.env.MASTODON_INSTANCE_URL;
-  if (!url) {
-    throw new Error(`Missing Mastodon instanceUrl. Provide it in config or MASTODON_INSTANCE_URL.`);
+  if (!value) {
+    throw new Error("Missing Mastodon instanceUrl. Provide it in config.");
   }
-  return url.replace(/\/+$/, "");
+  return value.replace(/\/+$/, "");
 }
 
 async function readJson<T>(response: Response) {
@@ -135,12 +134,7 @@ export async function publishToMastodon(context: PublishContext) {
   }
 
   const instanceUrl = normalizeInstanceUrl(account.instanceUrl);
-  const accessToken = resolveSecret(
-    account.accessToken,
-    account.accessTokenEnv,
-    "Mastodon access token",
-    "MASTODON_ACCESS_TOKEN"
-  );
+  const accessToken = resolveSecret(account.accessToken, "Mastodon access token");
   const visibility = account.visibility ?? "public";
   const posts = [];
   let previousStatusId: string | undefined;

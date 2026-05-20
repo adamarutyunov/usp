@@ -69,12 +69,7 @@ export async function publishToLinkedIn(context: PublishContext) {
   if (!account) {
     throw new Error(`Missing LinkedIn account "${context.target.account}".`);
   }
-  const accessToken = resolveSecret(
-    account.accessToken,
-    account.accessTokenEnv,
-    "LinkedIn access token",
-    "LINKEDIN_ACCESS_TOKEN"
-  );
+  const accessToken = resolveSecret(account.accessToken, "LinkedIn access token");
   const version = account.version ?? "202602";
   const posts = [];
 

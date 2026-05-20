@@ -24,7 +24,7 @@ type BlueskyPostRef = {
 };
 
 function normalizePdsUrl(value: string | undefined) {
-  return (value ?? process.env.BLUESKY_PDS_URL ?? "https://bsky.social").replace(/\/+$/, "");
+  return (value ?? "https://bsky.social").replace(/\/+$/, "");
 }
 
 function postUrl(handleOrDid: string, uri: string | undefined) {
@@ -142,13 +142,8 @@ export async function publishToBluesky(context: PublishContext) {
   }
 
   const pdsUrl = normalizePdsUrl(account.pdsUrl);
-  const identifier = resolveSecret(account.identifier, account.identifierEnv, "Bluesky identifier", "BLUESKY_IDENTIFIER");
-  const appPassword = resolveSecret(
-    account.appPassword,
-    account.appPasswordEnv,
-    "Bluesky app password",
-    "BLUESKY_APP_PASSWORD"
-  );
+  const identifier = resolveSecret(account.identifier, "Bluesky identifier");
+  const appPassword = resolveSecret(account.appPassword, "Bluesky app password");
   const session = await createSession(pdsUrl, identifier, appPassword);
   const handleOrDid = (session.handle || identifier).replace(/^@/, "");
   const posts = [];

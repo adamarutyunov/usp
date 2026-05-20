@@ -11,6 +11,7 @@ const PLATFORM_LABELS: Record<Platform, string> = {
   bluesky: "Bluesky",
   mastodon: "Mastodon",
   discord: "Discord",
+  threads: "Threads",
 };
 
 export function platformName(platform: Platform) {

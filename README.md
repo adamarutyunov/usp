@@ -95,14 +95,14 @@ Legend: ✅ supported, 🚧 WIP, ❌ not supported, — not applicable.
 
 | Destination | Text | Images | Multi-post / thread | Native link output | API posting | Browser posting | Setup link |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| [X](https://docs.x.com/x-api) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | [Developer portal](https://developer.x.com/en/portal/dashboard) |
-| [LinkedIn](https://learn.microsoft.com/linkedin/marketing/community-management/shares/posts-api) | ✅ | ✅ | 🚧 | ✅ | ✅ | — | [Developer apps](https://www.linkedin.com/developers/apps) |
-| [Reddit](https://www.reddit.com/dev/api/) | ✅ | ❌ | — | ✅ | ✅ | — | [OAuth apps](https://www.reddit.com/prefs/apps) |
-| [Telegram](https://core.telegram.org/bots/api) | ✅ | ✅ | ✅ | — | ✅ | — | [BotFather](https://t.me/BotFather) |
+| [X](https://x.com/) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | [Developer portal](https://developer.x.com/en/portal/dashboard) |
+| [LinkedIn](https://www.linkedin.com/) | ✅ | ✅ | 🚧 | ✅ | ✅ | — | [Developer apps](https://www.linkedin.com/developers/apps) |
+| [Reddit](https://www.reddit.com/) | ✅ | ❌ | — | ✅ | ✅ | — | [OAuth apps](https://www.reddit.com/prefs/apps) |
+| [Telegram](https://telegram.org/) | ✅ | ✅ | ✅ | — | ✅ | — | [BotFather](https://t.me/BotFather) |
 | [Aegea](https://blogengine.me/) | ✅ | ✅ | — | ✅ | ✅ | — | Local password login |
-| [Bluesky](https://docs.bsky.app/docs/tutorials/creating-a-post) | ✅ | ✅ | ✅ | ✅ | ✅ | — | [App passwords](https://bsky.app/settings/app-passwords) |
-| [Mastodon](https://docs.joinmastodon.org/methods/statuses/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | Your instance developer settings |
-| [Discord](https://docs.discord.com/developers/resources/webhook#execute-webhook) | ✅ | ✅ | ✅ | ✅ | ✅ | — | Channel integrations webhook URL |
+| [Bluesky](https://bsky.app/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | [App passwords](https://bsky.app/settings/app-passwords) |
+| [Mastodon](https://mastodon.social/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | [New application](https://mastodon.social/settings/applications/new) |
+| [Discord](https://discord.com/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | Channel integrations webhook URL |
 
 Reddit image support is marked unsupported because the current OAuth submit path creates self-posts; local images are only referenced in the body with a warning.
 
@@ -488,7 +488,11 @@ Each plan unit becomes one post. Multiple units are posted as a reply thread, an
 
 ### Mastodon
 
-Mastodon needs an instance URL and an access token with `write:statuses` and `write:media`:
+Mastodon needs an instance URL and an access token from the application settings page:
+
+https://mastodon.social/settings/applications/new
+
+Required permissions: `read:statuses`, `write:statuses`, and `write:media`.
 
 ```yaml
 accounts:

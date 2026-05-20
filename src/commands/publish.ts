@@ -1,3 +1,4 @@
+import { cancel, isCancel, select } from "@clack/prompts";
 import { loadConfig } from "../config/config.js";
 import { MarkdownFileInputSource, MarkdownTextInputSource, StdinMarkdownInputSource } from "../input/markdown-source.js";
 import { createLlmClient } from "../llm/client.js";
@@ -5,6 +6,7 @@ import { JsonLlmProcessor } from "../llm/processor.js";
 import { PublishPipeline, formatError } from "../pipeline/pipeline.js";
 import { LlmPlatformPlanner } from "../pipeline/planner.js";
 import { AdapterPoster } from "../posting/poster.js";
+import { PreviewStore } from "../preview/store.js";
 import { ConfigPromptProvider, parsePromptOverride } from "../prompt/provider.js";
 import type { PlatformPlan, PublishTargetResult } from "../types.js";
 import { createNoopSpinner, createSpinner, platformName, printError, printPlatformText, printWarning } from "../util/display.js";
@@ -15,7 +17,7 @@ function printHumanResults(results: PublishTargetResult[]) {
     if (result.ok === false) {
       continue;
     }
-    console.log(`${result.dryRun ? "[dry-run] " : ""}${result.target} (${result.platform}/${result.account})`);
+    console.log(`${result.target} (${result.platform}/${result.account})`);
     for (const post of result.posts) {
       if (post.url) {
         console.log(`  posted: ${post.url}`);
@@ -64,44 +66,53 @@ function createPipeline(
   return new PublishPipeline(input, planner, new AdapterPoster());
 }
 
-function createHumanHooks(json?: boolean) {
-  const makeSpinner = json ? createNoopSpinner : createSpinner;
+function assertNotCancel<T>(value: T | symbol): T {
+  if (isCancel(value)) {
+    cancel("Publish cancelled.");
+    process.exit(0);
+  }
+  return value;
+}
+
+function createHumanHooks() {
+  const makeSpinner = createSpinner;
   let prepareSpinner: ReturnType<typeof makeSpinner> | undefined;
   let postSpinner: ReturnType<typeof makeSpinner> | undefined;
 
   return {
+    onPreviewDirectory(dir: string) {
+      console.log(`Preview directory: ${dir}`);
+    },
+    onPreviewReuse(target: { id: string }) {
+      prepareSpinner?.succeed(`Loaded preview for ${target.id}`);
+    },
+    onPreviewWrite(target: { id: string }, filePath: string) {
+      console.log(`  saved ${target.id}: ${filePath}`);
+    },
     onPrepareStart(target: { config: { platform: Parameters<typeof platformName>[0] } }) {
       prepareSpinner = makeSpinner(`Preparing text for ${platformName(target.config.platform)}...`);
     },
     onPrepareSuccess(target: { config: { platform: Parameters<typeof platformName>[0] } }, plan: PlatformPlan) {
       const name = platformName(target.config.platform);
       prepareSpinner?.succeed(`Prepared text for ${name}`);
-      if (!json) {
-        printPlatformText(target.config.platform, plan);
-      }
+      printPlatformText(target.config.platform, plan);
     },
     onPrepareError(target: { config: { platform: Parameters<typeof platformName>[0] } }, error: unknown) {
       const name = platformName(target.config.platform);
       prepareSpinner?.fail(`Error preparing text for ${name}`);
-      if (!json) {
-        printError(`Error preparing text for ${name}: ${formatError(error)}`);
-      }
+      printError(`Error preparing text for ${name}: ${formatError(error)}`);
     },
     onPostStart(target: { config: { platform: Parameters<typeof platformName>[0] } }) {
       postSpinner = makeSpinner(`Posting to ${platformName(target.config.platform)}...`);
     },
     onPostSuccess(target: { config: { platform: Parameters<typeof platformName>[0] } }, result: PublishTargetResult) {
       postSpinner?.succeed(`Successfully posted to ${platformName(target.config.platform)}`);
-      if (!json) {
-        printPostSuccess(result);
-      }
+      printPostSuccess(result);
     },
     onPostError(target: { config: { platform: Parameters<typeof platformName>[0] } }, error: unknown) {
       const name = platformName(target.config.platform);
       postSpinner?.fail(`Error posting to ${name}`);
-      if (!json) {
-        printError(`Error posting to ${name}: ${formatError(error)}`);
-      }
+      printError(`Error posting to ${name}: ${formatError(error)}`);
     },
   };
 }
@@ -138,20 +149,21 @@ export async function planCommand(
   console.log(JSON.stringify(plan, null, 2));
 }
 
-export async function publishCommand(
+type PublishOptions = {
+  config?: string;
+  profile?: string;
+  target?: string[];
+  set?: string[];
+  prompt?: string[];
+  input?: string;
+  inputText?: string;
+  stdin?: boolean;
+};
+
+async function runPublishFlow(
   file: string | undefined,
-  options: {
-    config?: string;
-    profile?: string;
-    target?: string[];
-    set?: string[];
-    prompt?: string[];
-    input?: string;
-    inputText?: string;
-    stdin?: boolean;
-    dryRun?: boolean;
-    json?: boolean;
-  }
+  options: PublishOptions,
+  mode: "publish" | "preview"
 ) {
   const config = await loadConfig({ configPath: options.config, overrides: options.set });
   const targets = resolveTargets(config, { profile: options.profile, targets: options.target });
@@ -165,18 +177,38 @@ export async function publishCommand(
     throw new Error("No configured targets to publish to. Run `usp setup` or pass a configured --target.");
   }
   const pipeline = createPipeline(file, options, config);
+  const previewStore = new PreviewStore();
   const { plan, results } = await pipeline.publish({
     config,
     targets: locallyReady,
-    dryRun: Boolean(options.dryRun),
-    hooks: createHumanHooks(options.json),
+    dryRun: false,
+    preview: {
+      store: previewStore,
+      previewOnly: mode === "preview",
+      async onExistingDirectory(dir) {
+        return assertNotCancel(
+          await select({
+            message: `A preview already exists for this input at ${dir}.`,
+            options: [
+              { value: "reuse", label: "Reuse preview text", hint: "Load existing target files and generate only missing ones" },
+              { value: "regenerate", label: "Regenerate text", hint: "Replace preview files with fresh LLM output" },
+            ],
+          })
+        );
+      },
+    },
+    hooks: createHumanHooks(),
   });
 
-  if (options.json) {
-    console.log(JSON.stringify({ plan, results }, null, 2));
-  } else {
-    if (options.dryRun) {
-      printHumanResults(results);
-    }
+  if (mode === "preview") {
+    printHumanResults(results);
   }
+}
+
+export async function publishCommand(file: string | undefined, options: PublishOptions) {
+  await runPublishFlow(file, options, "publish");
+}
+
+export async function previewCommand(file: string | undefined, options: PublishOptions) {
+  await runPublishFlow(file, options, "preview");
 }

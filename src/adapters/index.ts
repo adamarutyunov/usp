@@ -6,6 +6,7 @@ import { publishToLinkedIn } from "./linkedin.js";
 import { publishToMastodon } from "./mastodon.js";
 import { publishToReddit } from "./reddit.js";
 import { publishToTelegram } from "./telegram.js";
+import { publishToThreads } from "./threads.js";
 import { publishToX } from "./x.js";
 
 const publishers = {
@@ -17,6 +18,7 @@ const publishers = {
   bluesky: publishToBluesky,
   mastodon: publishToMastodon,
   discord: publishToDiscord,
+  threads: publishToThreads,
 };
 
 export async function publishTarget({
@@ -34,7 +36,7 @@ export async function publishTarget({
   media: SourceMedia[];
   dryRun: boolean;
 }): Promise<PublishTargetResult> {
-  const platformPlan = plan.platforms[target.platform];
+  const platformPlan = plan.targets?.[targetId] ?? plan.platforms[target.platform];
   if (!platformPlan) {
     throw new Error(`Plan does not contain platform "${target.platform}".`);
   }

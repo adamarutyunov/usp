@@ -6,7 +6,8 @@ export type Platform =
   | "aegea"
   | "bluesky"
   | "mastodon"
-  | "discord";
+  | "discord"
+  | "threads";
 
 export type LlmProvider = "gemini" | "openai" | "anthropic";
 
@@ -18,80 +19,66 @@ export type LlmConfig = {
   provider?: LlmProvider;
   model?: string;
   apiKey?: SecretValue;
-  apiKeyEnv?: string;
   authToken?: SecretValue;
-  authTokenEnv?: string;
-  authSource?: "api-key" | "codex" | "anthropic-auth-token";
 };
 
 export type XAccount = {
   consumerKey?: SecretValue;
-  consumerKeyEnv?: string;
   consumerSecret?: SecretValue;
-  consumerSecretEnv?: string;
   accessToken?: SecretValue;
-  accessTokenEnv?: string;
   accessTokenSecret?: SecretValue;
-  accessTokenSecretEnv?: string;
-  oauth2AccessToken?: SecretValue;
-  oauth2AccessTokenEnv?: string;
 };
 
 export type LinkedInAccount = {
   accessToken?: SecretValue;
-  accessTokenEnv?: string;
   author: string;
   version?: string;
 };
 
 export type RedditAccount = {
   clientId?: SecretValue;
-  clientIdEnv?: string;
   clientSecret?: SecretValue;
-  clientSecretEnv?: string;
   refreshToken?: SecretValue;
-  refreshTokenEnv?: string;
   username?: SecretValue;
-  usernameEnv?: string;
   password?: SecretValue;
-  passwordEnv?: string;
   userAgent?: string;
   subreddit?: string;
 };
 
 export type TelegramAccount = {
   botToken?: SecretValue;
-  botTokenEnv?: string;
   chatId?: string;
 };
 
 export type AegeaAccount = {
   baseUrl?: string;
   password?: SecretValue;
-  passwordEnv?: string;
 };
 
 export type BlueskyAccount = {
   identifier?: string;
-  identifierEnv?: string;
   appPassword?: SecretValue;
-  appPasswordEnv?: string;
   pdsUrl?: string;
 };
 
 export type MastodonAccount = {
   instanceUrl?: string;
   accessToken?: SecretValue;
-  accessTokenEnv?: string;
   visibility?: "public" | "unlisted" | "private" | "direct";
 };
 
 export type DiscordAccount = {
   webhookUrl?: SecretValue;
-  webhookUrlEnv?: string;
   threadId?: string;
   username?: string;
   avatarUrl?: string;
+};
+
+export type ThreadsAccount = {
+  accessToken?: SecretValue;
+  userId?: string;
+  username?: string;
+  replyControl?: "everyone" | "followers" | "mentioned_only";
 };
 
 export type AccountsConfig = {
@@ -103,6 +90,7 @@ export type AccountsConfig = {
   bluesky?: Record<string, BlueskyAccount>;
   mastodon?: Record<string, MastodonAccount>;
   discord?: Record<string, DiscordAccount>;
+  threads?: Record<string, ThreadsAccount>;
 };
 
 export type BrowserAuthProfile = {
@@ -175,6 +163,7 @@ export type PublishPlan = {
   };
   media: Array<Pick<SourceMedia, "id" | "alt" | "rawPath" | "mime" | "size">>;
   platforms: Partial<Record<Platform, PlatformPlan>>;
+  targets?: Record<string, PlatformPlan>;
 };
 
 export type PublishTargetResult = {

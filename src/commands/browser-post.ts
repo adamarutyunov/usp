@@ -1,94 +1,105 @@
-import { publishToXBrowser } from "../adapters/browser/x.js";
 import { loadConfig } from "../config/config.js";
-import type { Platform, TargetConfig } from "../types.js";
-import { platformName } from "../util/display.js";
+import { MarkdownFileInputSource } from "../input/markdown-source.js";
+import { createLlmClient } from "../llm/client.js";
+import { JsonLlmProcessor } from "../llm/processor.js";
+import { publishToXBrowser } from "../adapters/browser/x.js";
+import { PublishPipeline, formatError } from "../pipeline/pipeline.js";
+import { LlmPlatformPlanner } from "../pipeline/planner.js";
+import { Poster, type PostRequest } from "../pipeline/contracts.js";
+import { ConfigPromptProvider, parsePromptOverride } from "../prompt/provider.js";
+import type { PublishTargetResult } from "../types.js";
+import { createSpinner, platformName, printError, printPlatformText, printWarning } from "../util/display.js";
+import { resolveTargets } from "./targets.js";
 
 type BrowserPostOptions = {
-  account?: string;
-  browser?: "chrome" | "chromium" | "msedge";
-  headed?: boolean;
-  headless?: boolean;
-  media?: string[];
-  profileDir?: string;
-  text?: string;
-  thread?: string[];
-  dryRun?: boolean;
-  yes?: boolean;
-  json?: boolean;
+  config?: string;
+  profile?: string;
+  target?: string[];
+  set?: string[];
+  prompt?: string[];
 };
 
-function assertPlatform(value: string): asserts value is Platform {
-  if (value !== "x") {
-    throw new Error("Browser posting currently supports only x.");
+class BrowserPoster extends Poster {
+  post(request: PostRequest) {
+    if (request.target.platform !== "x") {
+      throw new Error("Browser posting currently supports only X targets.");
+    }
+    return publishToXBrowser({
+      targetId: request.targetId,
+      target: request.target,
+      config: request.config,
+      plan: request.plan.targets?.[request.targetId] ?? request.plan.platforms.x!,
+      media: request.media,
+      dryRun: false,
+      headless: true,
+    });
   }
 }
 
-function mediaRefsForUnit(index: number, unitCount: number, mediaCount: number) {
-  if (mediaCount === 0) {
-    return undefined;
-  }
-
-  if (unitCount > 1 && mediaCount === unitCount) {
-    return [`cli-media-${index + 1}`];
-  }
-
-  return index === 0 ? Array.from({ length: mediaCount }, (_item, mediaIndex) => `cli-media-${mediaIndex + 1}`) : undefined;
-}
-
-export async function browserPostCommand(platformArg = "x", options: BrowserPostOptions = {}) {
-  assertPlatform(platformArg);
-  const text = options.text?.trim();
-  const thread = (options.thread?.length ? options.thread : text ? [text] : []).map((item) => item.trim()).filter(Boolean);
-  if (thread.length === 0) {
-    throw new Error("Provide --text or repeat --thread for the browser post.");
-  }
-  if (!options.dryRun && !options.yes) {
-    throw new Error("Refusing to publish without --yes. Use --dry-run to test without posting.");
-  }
-
-  const config = await loadConfig();
-  const target: TargetConfig = {
-    platform: "x",
-    account: options.account ?? "main",
-  };
-
-  const result = await publishToXBrowser({
-    targetId: "x-browser",
-    target,
-    config,
-    plan: {
-      units: thread.map((item, index) => ({
-        text: item,
-        mediaRefs: mediaRefsForUnit(index, thread.length, options.media?.length ?? 0),
-      })),
-    },
-    media: (options.media ?? []).map((filePath, index) => ({
-      id: `cli-media-${index + 1}`,
-      alt: "",
-      rawPath: filePath,
-      resolvedPath: filePath,
-      isRemote: false,
-    })),
-    dryRun: Boolean(options.dryRun),
-    browser: options.browser,
-    headless: options.headed ? false : options.headless ?? true,
-    profileDir: options.profileDir,
-  });
-
-  if (options.json) {
-    console.log(JSON.stringify(result, null, 2));
-    return;
-  }
-
-  const prefix = result.dryRun ? "Prepared browser post for" : "Posted to";
-  console.log(`${prefix} ${platformName(result.platform)} (${result.account})`);
+function printPostSuccess(result: PublishTargetResult) {
   for (const post of result.posts) {
     if (post.url) {
       console.log(`  ${post.url}`);
     } else if (post.id) {
       console.log(`  ${post.id}`);
-    } else {
-      console.log(`  ${post.text}`);
     }
+  }
+  for (const warning of result.warnings ?? []) {
+    printWarning(`Warning for ${platformName(result.platform)}: ${warning}`);
+  }
+}
+
+export async function browserPostCommand(file: string | undefined, options: BrowserPostOptions = {}) {
+  if (!file) {
+    throw new Error("Provide a Markdown file.");
+  }
+
+  const config = await loadConfig({ configPath: options.config, overrides: options.set });
+  const selectedTargets = resolveTargets(config, { profile: options.profile, targets: options.target });
+  const targets = selectedTargets.filter((target) => target.config.platform === "x");
+  if (targets.length === 0) {
+    throw new Error("Browser posting currently supports only configured X targets.");
+  }
+
+  const input = new MarkdownFileInputSource(file);
+  const llm = new JsonLlmProcessor(createLlmClient(config.llm));
+  const prompts = new ConfigPromptProvider((options.prompt ?? []).map(parsePromptOverride));
+  const planner = new LlmPlatformPlanner(prompts, llm);
+  const pipeline = new PublishPipeline(input, planner, new BrowserPoster());
+  let prepareSpinner: ReturnType<typeof createSpinner> | undefined;
+  let postSpinner: ReturnType<typeof createSpinner> | undefined;
+
+  const { results } = await pipeline.publish({
+    config,
+    targets,
+    dryRun: false,
+    hooks: {
+      onPrepareStart(target) {
+        prepareSpinner = createSpinner(`Preparing text for ${platformName(target.config.platform)}...`);
+      },
+      onPrepareSuccess(target, plan) {
+        prepareSpinner?.succeed(`Prepared text for ${platformName(target.config.platform)}`);
+        printPlatformText(target.config.platform, plan);
+      },
+      onPrepareError(target, error) {
+        prepareSpinner?.fail(`Error preparing text for ${platformName(target.config.platform)}`);
+        printError(`Error preparing text for ${platformName(target.config.platform)}: ${formatError(error)}`);
+      },
+      onPostStart(target) {
+        postSpinner = createSpinner(`Browser posting to ${platformName(target.config.platform)}...`);
+      },
+      onPostSuccess(target, result) {
+        postSpinner?.succeed(`Posted to ${platformName(target.config.platform)}`);
+        printPostSuccess(result);
+      },
+      onPostError(target, error) {
+        postSpinner?.fail(`Error posting to ${platformName(target.config.platform)}`);
+        printError(`Error posting to ${platformName(target.config.platform)}: ${formatError(error)}`);
+      },
+    },
+  });
+
+  if (results.some((result) => result.ok === false)) {
+    process.exitCode = 1;
   }
 }

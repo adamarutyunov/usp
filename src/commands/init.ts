@@ -5,7 +5,6 @@ export const SAMPLE_CONFIG: UspConfig = {
   llm: {
     provider: "gemini",
     model: "gemini-2.5-flash-lite",
-    apiKeyEnv: "GEMINI_API_KEY",
   },
   profiles: {
     default: {
@@ -18,6 +17,7 @@ export const SAMPLE_CONFIG: UspConfig = {
         "bluesky-main",
         "mastodon-main",
         "discord-main",
+        "threads-main",
       ],
     },
   },
@@ -38,7 +38,6 @@ export const SAMPLE_CONFIG: UspConfig = {
     "telegram-channel": {
       platform: "telegram",
       account: "main",
-      chatId: "$TELEGRAM_CHAT_ID",
     },
     "aegea-blog": {
       platform: "aegea",
@@ -54,6 +53,10 @@ export const SAMPLE_CONFIG: UspConfig = {
     },
     "discord-main": {
       platform: "discord",
+      account: "main",
+    },
+    "threads-main": {
+      platform: "threads",
       account: "main",
     },
   },

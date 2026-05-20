@@ -1,6 +1,6 @@
 import { TwitterApi } from "twitter-api-v2";
 import type { XAccount } from "../types.js";
-import { optionalSecret, resolveSecret } from "../util/secrets.js";
+import { resolveSecret } from "../util/secrets.js";
 import { dryRunResult, getReferencedMedia, type PublishContext } from "./common.js";
 
 function getAccount(context: PublishContext): XAccount {
@@ -12,42 +12,12 @@ function getAccount(context: PublishContext): XAccount {
 }
 
 function createClient(account: XAccount) {
-  const consumerKey = optionalSecret(account.consumerKey, account.consumerKeyEnv, "X_CONSUMER_KEY");
-  const consumerSecret = optionalSecret(account.consumerSecret, account.consumerSecretEnv, "X_CONSUMER_SECRET");
-  const accessToken = optionalSecret(account.accessToken, account.accessTokenEnv, "X_ACCESS_TOKEN");
-  const accessTokenSecret = optionalSecret(
-    account.accessTokenSecret,
-    account.accessTokenSecretEnv,
-    "X_ACCESS_TOKEN_SECRET"
-  );
-  const oauth2AccessToken = optionalSecret(
-    account.oauth2AccessToken,
-    account.oauth2AccessTokenEnv,
-    "X_OAUTH2_ACCESS_TOKEN"
-  );
-
-  if (consumerKey && consumerSecret && accessToken && accessTokenSecret) {
-    return {
-      client: new TwitterApi({
-        appKey: consumerKey,
-        appSecret: consumerSecret,
-        accessToken,
-        accessSecret: accessTokenSecret,
-      }),
-      canUploadMedia: true,
-    };
-  }
-
-  if (oauth2AccessToken) {
-    return {
-      client: new TwitterApi(oauth2AccessToken),
-      canUploadMedia: false,
-    };
-  }
-
-  throw new Error(
-    "X posting requires OAuth 1.0a credentials, or X_OAUTH2_ACCESS_TOKEN for text-only posting."
-  );
+  return new TwitterApi({
+    appKey: resolveSecret(account.consumerKey, "X consumer key"),
+    appSecret: resolveSecret(account.consumerSecret, "X consumer secret"),
+    accessToken: resolveSecret(account.accessToken, "X access token"),
+    accessSecret: resolveSecret(account.accessTokenSecret, "X access token secret"),
+  });
 }
 
 export async function publishToX(context: PublishContext) {
@@ -56,16 +26,12 @@ export async function publishToX(context: PublishContext) {
   }
 
   const account = getAccount(context);
-  const { client, canUploadMedia } = createClient(account);
+  const client = createClient(account);
   const posts = [];
   let previousTweetId: string | undefined;
 
   for (const unit of context.plan.units) {
     const media = getReferencedMedia(context.media, unit.mediaRefs);
-    if (media.length > 0 && !canUploadMedia) {
-      throw new Error("X media uploads require OAuth 1.0a credentials.");
-    }
-
     const mediaIds: string[] = [];
     for (const item of media) {
       const uploadable = item.data ?? item.resolvedPath;

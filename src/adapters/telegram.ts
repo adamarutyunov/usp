@@ -8,7 +8,7 @@ function getBotToken(context: PublishContext) {
   if (!account) {
     throw new Error(`Missing Telegram account "${context.target.account}".`);
   }
-  return resolveSecret(account.botToken, account.botTokenEnv, "Telegram bot token", "TELEGRAM_BOT_TOKEN");
+  return resolveSecret(account.botToken, "Telegram bot token");
 }
 
 async function callTelegram(botToken: string, method: string, body: FormData | Record<string, unknown>) {
@@ -42,11 +42,9 @@ export async function publishToTelegram(context: PublishContext) {
 
   const account = context.config.accounts?.telegram?.[context.target.account];
   const configuredChatId = context.target.chatId;
-  const chatId = configuredChatId?.startsWith("$")
-    ? process.env[configuredChatId.slice(1)]
-    : configuredChatId || account?.chatId || process.env.TELEGRAM_CHAT_ID;
+  const chatId = configuredChatId || account?.chatId;
   if (!chatId) {
-    throw new Error(`Telegram target "${context.targetId}" needs chatId or TELEGRAM_CHAT_ID.`);
+    throw new Error(`Telegram target "${context.targetId}" needs chatId or an account default chatId.`);
   }
   const botToken = getBotToken(context);
   const posts = [];

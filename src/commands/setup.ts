@@ -17,6 +17,7 @@ import {
   writeProjectConfig,
   writeSocialAuthConfig,
 } from "../config/config.js";
+import { DEFAULT_PLATFORM_PROMPTS } from "../llm/prompts.js";
 import type { LlmProvider, Platform, UspConfig } from "../types.js";
 import { SAMPLE_CONFIG } from "./init.js";
 
@@ -29,6 +30,7 @@ const PLATFORM_ACCOUNT_NAMES: Record<Platform, string> = {
   bluesky: "main",
   mastodon: "main",
   discord: "main",
+  threads: "main",
 };
 
 const TARGET_IDS: Record<Platform, string> = {
@@ -40,24 +42,22 @@ const TARGET_IDS: Record<Platform, string> = {
   bluesky: "bluesky-main",
   mastodon: "mastodon-main",
   discord: "discord-main",
+  threads: "threads-main",
 };
 
-const LLM_DEFAULTS: Record<LlmProvider, { model: string; env: string; keyUrl: string; label: string }> = {
+const LLM_DEFAULTS: Record<LlmProvider, { model: string; keyUrl: string; label: string }> = {
   gemini: {
     model: "gemini-2.5-flash-lite",
-    env: "GEMINI_API_KEY",
     keyUrl: "https://aistudio.google.com/app/apikey",
     label: "Gemini",
   },
   openai: {
     model: "gpt-5.4-mini",
-    env: "OPENAI_API_KEY",
     keyUrl: "https://platform.openai.com/api-keys",
     label: "OpenAI",
   },
   anthropic: {
     model: "claude-sonnet-4-5",
-    env: "ANTHROPIC_API_KEY",
     keyUrl: "https://console.anthropic.com/settings/keys",
     label: "Anthropic",
   },
@@ -72,6 +72,7 @@ const SOCIAL_PLATFORMS: Platform[] = [
   "bluesky",
   "mastodon",
   "discord",
+  "threads",
 ];
 
 function assertNotCancel<T>(value: T | symbol): T {
@@ -113,14 +114,11 @@ function applyValues(account: Record<string, unknown>, values: string[] = []) {
 
 async function writePlatformSocialAuth(
   platform: Platform,
-  account: Record<string, unknown>,
-  accountName = PLATFORM_ACCOUNT_NAMES[platform]
+  socialAuth: UspConfig
 ) {
   return writeSocialAuthConfig(`${platform}.yml`, {
     accounts: {
-      [platform]: {
-        [accountName]: account,
-      },
+      [platform]: socialAuth.accounts?.[platform] ?? {},
     },
   } as UspConfig);
 }
@@ -132,15 +130,24 @@ async function writeLlmAuth(config: UspConfig) {
   return writeSocialAuthConfig("llm.yml", config);
 }
 
-function ensureTarget(project: UspConfig, platform: Platform) {
-  const id = TARGET_IDS[platform];
+function safeSegment(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "account";
+}
+
+function targetIdFor(platform: Platform, accountName: string) {
+  const legacyName = PLATFORM_ACCOUNT_NAMES[platform];
+  return accountName === legacyName ? TARGET_IDS[platform] : `${platform}-${safeSegment(accountName)}`;
+}
+
+function ensureTarget(project: UspConfig, platform: Platform, accountName = PLATFORM_ACCOUNT_NAMES[platform]) {
+  const id = targetIdFor(platform, accountName);
   project.targets ??= {};
   project.targets[id] ??= {
     platform,
-    account: PLATFORM_ACCOUNT_NAMES[platform],
+    account: accountName,
   };
   project.targets[id]!.platform = platform;
-  project.targets[id]!.account = PLATFORM_ACCOUNT_NAMES[platform];
+  project.targets[id]!.account = accountName;
 
   project.profiles ??= {};
   project.profiles.default ??= { targets: [] };
@@ -155,10 +162,8 @@ function hasValue(value: unknown) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function accountFor(config: UspConfig, platform: Platform) {
-  return config.accounts?.[platform]?.[PLATFORM_ACCOUNT_NAMES[platform]] as
-    | Record<string, unknown>
-    | undefined;
+function accountsFor(config: UspConfig, platform: Platform) {
+  return (config.accounts?.[platform] ?? {}) as Record<string, Record<string, unknown>>;
 }
 
 function llmStatus(project: UspConfig, socialAuth: UspConfig) {
@@ -167,62 +172,68 @@ function llmStatus(project: UspConfig, socialAuth: UspConfig) {
     return "not set";
   }
 
-  const auth =
-    llm.authSource === "codex"
-      ? "Codex"
-      : llm.authSource === "anthropic-auth-token" || llm.authToken || llm.authTokenEnv
-        ? "Claude token"
-        : llm.apiKey || llm.apiKeyEnv
-          ? "API key"
-          : "auth pending";
+  const auth = llm.authToken ? "Claude token" : llm.apiKey ? "API key" : "auth pending";
   return `${llm.provider}, ${auth}`;
 }
 
 function platformStatus(project: UspConfig, socialAuth: UspConfig, platform: Platform) {
-  const account = accountFor(socialAuth, platform);
-  const target = project.targets?.[TARGET_IDS[platform]];
+  const accounts = accountsFor(socialAuth, platform);
+  const statuses = Object.entries(accounts).map(([accountName, account]) => {
+    const target = Object.values(project.targets ?? {}).find(
+      (item) => item.platform === platform && item.account === accountName
+    );
 
-  if (platform === "x") {
-    return account &&
+    if (platform === "x") {
+      return account &&
       hasValue(account.consumerKey) &&
       hasValue(account.consumerSecret) &&
       hasValue(account.accessToken) &&
       hasValue(account.accessTokenSecret)
       ? "set"
       : "not set";
-  }
+    }
 
-  if (platform === "linkedin") {
-    return account && hasValue(account.accessToken) && hasValue(account.author) ? "set" : "not set";
-  }
+    if (platform === "linkedin") {
+      return account && hasValue(account.accessToken) && hasValue(account.author) ? "set" : "not set";
+    }
 
-  if (platform === "reddit") {
-    return account &&
+    if (platform === "reddit") {
+      return account &&
       hasValue(account.clientId) &&
       hasValue(account.clientSecret) &&
       (hasValue(account.refreshToken) || (hasValue(account.username) && hasValue(account.password))) &&
-      hasValue(target?.subreddit)
+      hasValue(account.subreddit || target?.subreddit)
       ? "set"
       : "not set";
-  }
+    }
 
-  if (platform === "telegram") {
-    return account && hasValue(account.botToken) && hasValue(target?.chatId) ? "set" : "not set";
-  }
+    if (platform === "telegram") {
+      return account && hasValue(account.botToken) && hasValue(account.chatId || target?.chatId) ? "set" : "not set";
+    }
 
-  if (platform === "aegea") {
-    return account && hasValue(account.baseUrl) && hasValue(account.password) ? "set" : "not set";
-  }
+    if (platform === "aegea") {
+      return account && hasValue(account.baseUrl) && hasValue(account.password) ? "set" : "not set";
+    }
 
-  if (platform === "bluesky") {
-    return account && hasValue(account.identifier) && hasValue(account.appPassword) ? "set" : "not set";
-  }
+    if (platform === "bluesky") {
+      return account && hasValue(account.identifier) && hasValue(account.appPassword) ? "set" : "not set";
+    }
 
-  if (platform === "mastodon") {
-    return account && hasValue(account.instanceUrl) && hasValue(account.accessToken) ? "set" : "not set";
-  }
+    if (platform === "mastodon") {
+      return account && hasValue(account.instanceUrl) && hasValue(account.accessToken) ? "set" : "not set";
+    }
 
-  return account && hasValue(account.webhookUrl) ? "set" : "not set";
+    if (platform === "threads") {
+      return account && hasValue(account.accessToken) ? "set" : "not set";
+    }
+
+    return account && hasValue(account.webhookUrl) ? "set" : "not set";
+  });
+
+  if (statuses.length === 0) {
+    return "not set";
+  }
+  return statuses.every((item) => item === "set") ? `${statuses.length} configured` : `${statuses.length} partial`;
 }
 
 function statusHint(status: string) {
@@ -247,57 +258,11 @@ async function configureLlm(project: UspConfig, socialAuth: UspConfig) {
   ) as LlmProvider;
   const defaults = LLM_DEFAULTS[provider];
 
-  project.llm = {
-    provider,
-    model: defaults.model,
-    apiKeyEnv: defaults.env,
-  };
-
-  if (provider === "openai") {
-    note(
-      [
-        "Browser login path: run `codex login` first. usp will read ~/.codex/auth.json.",
-        "API key path: https://platform.openai.com/api-keys",
-        "Default env var: OPENAI_API_KEY",
-      ].join("\n"),
-      "OpenAI auth"
-    );
-    const mode = assertNotCancel(
-      await select({
-        message: "How should usp authenticate OpenAI?",
-        initialValue: "codex",
-        options: [
-          { value: "codex", label: "Use Codex browser login", hint: "~/.codex/auth.json" },
-          { value: "env", label: "Use env var", hint: "OPENAI_API_KEY" },
-          { value: "paste", label: "Paste API key now", hint: "Saved under social-auth" },
-        ],
-      })
-    ) as "codex" | "env" | "paste";
-
-    project.llm = {
-      provider,
-      model: defaults.model,
-      ...(mode === "codex" ? { authSource: "codex" as const } : { apiKeyEnv: defaults.env }),
-    };
-    socialAuth.llm =
-      mode === "paste"
-        ? {
-            provider,
-            model: defaults.model,
-            apiKey: assertNotCancel(await password({ message: "OpenAI API key" })),
-          }
-        : mode === "codex"
-          ? { provider, model: defaults.model, authSource: "codex" }
-          : { provider, model: defaults.model, apiKeyEnv: defaults.env };
-    return;
-  }
-
   if (provider === "anthropic") {
     note(
       [
         "API key path: https://console.anthropic.com/settings/keys",
         "Claude Code token path: run `claude setup-token`, then paste the result here.",
-        "Anthropic documents ANTHROPIC_AUTH_TOKEN as a bearer Authorization token for Claude Code style auth.",
       ].join("\n"),
       "Anthropic auth"
     );
@@ -307,69 +272,41 @@ async function configureLlm(project: UspConfig, socialAuth: UspConfig) {
         initialValue: "auth-paste",
         options: [
           { value: "auth-paste", label: "Paste Claude setup-token result", hint: "Saved under social-auth" },
-          { value: "api-env", label: "Use ANTHROPIC_API_KEY", hint: "API key env var" },
           { value: "api-paste", label: "Paste API key now", hint: "Saved under social-auth" },
         ],
       })
-    ) as "auth-paste" | "api-env" | "api-paste";
+    ) as "auth-paste" | "api-paste";
 
     project.llm = {
       provider,
       model: defaults.model,
-      ...(mode === "auth-paste"
-        ? { authSource: "anthropic-auth-token" as const, authTokenEnv: "ANTHROPIC_AUTH_TOKEN" }
-        : { apiKeyEnv: "ANTHROPIC_API_KEY" }),
     };
     socialAuth.llm =
       mode === "auth-paste"
         ? {
             provider,
             model: defaults.model,
-            authSource: "anthropic-auth-token",
             authToken: assertNotCancel(await password({ message: "Claude setup-token result" })),
           }
-        : mode === "api-paste"
-            ? {
-                provider,
-                model: defaults.model,
-                apiKey: assertNotCancel(await password({ message: "Anthropic API key" })),
-              }
-            : { provider, model: defaults.model, apiKeyEnv: "ANTHROPIC_API_KEY" };
+        : {
+            provider,
+            model: defaults.model,
+            apiKey: assertNotCancel(await password({ message: "Anthropic API key" })),
+          };
     return;
   }
 
-  note(
-    [`Create or copy an API key here: ${defaults.keyUrl}`, `Default env var: ${defaults.env}`].join("\n"),
-    `${defaults.label} key`
-  );
-  const secretMode = assertNotCancel(
-    await select({
-      message: "How should usp store the LLM key?",
-      initialValue: "env",
-      options: [
-        { value: "env", label: "Use env var", hint: defaults.env },
-        { value: "paste", label: "Paste key now", hint: "Saved under social-auth" },
-      ],
-    })
-  ) as "env" | "paste";
-
-  if (secretMode === "paste") {
-    socialAuth.llm = {
-      provider,
-      model: defaults.model,
-      apiKey: assertNotCancel(await password({ message: `${defaults.label} API key` })),
-    };
-  } else {
-    socialAuth.llm = {
-      provider,
-      model: defaults.model,
-      apiKeyEnv: defaults.env,
-    };
-  }
+  note(`Create or copy an API key here: ${defaults.keyUrl}`, `${defaults.label} key`);
+  project.llm = { provider, model: defaults.model };
+  socialAuth.llm = {
+    provider,
+    model: defaults.model,
+    apiKey: assertNotCancel(await password({ message: `${defaults.label} API key` })),
+  };
 }
 
-async function configureX(socialAuth: UspConfig, project: UspConfig) {
-  ensureTarget(project, "x");
+async function configureX(socialAuth: UspConfig, project: UspConfig, accountName: string) {
+  ensureTarget(project, "x", accountName);
   note(
     [
       "Create an X developer app and enable user authentication with read/write permissions.",
@@ -379,15 +316,15 @@ async function configureX(socialAuth: UspConfig, project: UspConfig) {
     "X credentials"
   );
 
-  const account = ensureAccount(socialAuth, "x");
+  const account = ensureAccount(socialAuth, "x", accountName);
   account.consumerKey = assertNotCancel(await password({ message: "X consumer key" }));
   account.consumerSecret = assertNotCancel(await password({ message: "X consumer secret" }));
   account.accessToken = assertNotCancel(await password({ message: "X access token" }));
   account.accessTokenSecret = assertNotCancel(await password({ message: "X access token secret" }));
 }
 
-async function configureLinkedIn(socialAuth: UspConfig, project: UspConfig) {
-  ensureTarget(project, "linkedin");
+async function configureLinkedIn(socialAuth: UspConfig, project: UspConfig, accountName: string) {
+  ensureTarget(project, "linkedin", accountName);
   note(
     [
       "Create a LinkedIn developer app and request member posting access.",
@@ -398,7 +335,7 @@ async function configureLinkedIn(socialAuth: UspConfig, project: UspConfig) {
     "LinkedIn credentials"
   );
 
-  const account = ensureAccount(socialAuth, "linkedin");
+  const account = ensureAccount(socialAuth, "linkedin", accountName);
   account.accessToken = assertNotCancel(await password({ message: "LinkedIn access token" }));
   account.author = assertNotCancel(await text({ message: "LinkedIn personal author URN" }));
   account.version = assertNotCancel(
@@ -410,8 +347,8 @@ async function configureLinkedIn(socialAuth: UspConfig, project: UspConfig) {
   );
 }
 
-async function configureReddit(socialAuth: UspConfig, project: UspConfig) {
-  const target = ensureTarget(project, "reddit");
+async function configureReddit(socialAuth: UspConfig, project: UspConfig, accountName: string) {
+  const target = ensureTarget(project, "reddit", accountName);
   note(
     [
       "Create a Reddit OAuth app. Script apps are simplest for personal testing.",
@@ -421,15 +358,14 @@ async function configureReddit(socialAuth: UspConfig, project: UspConfig) {
     "Reddit credentials"
   );
 
-  target.subreddit = assertNotCancel(
+  const account = ensureAccount(socialAuth, "reddit", accountName);
+  account.subreddit = assertNotCancel(
     await text({
-      message: "Subreddit for this target",
+      message: "Default subreddit for this account",
       placeholder: "reddit_api_test",
-      defaultValue: target.subreddit ?? "reddit_api_test",
+      defaultValue: String(account.subreddit ?? target.subreddit ?? "reddit_api_test"),
     })
   );
-
-  const account = ensureAccount(socialAuth, "reddit");
   account.clientId = assertNotCancel(await password({ message: "Reddit client id" }));
   account.clientSecret = assertNotCancel(await password({ message: "Reddit client secret" }));
 
@@ -463,8 +399,8 @@ async function configureReddit(socialAuth: UspConfig, project: UspConfig) {
   );
 }
 
-async function configureTelegram(socialAuth: UspConfig, project: UspConfig) {
-  const target = ensureTarget(project, "telegram");
+async function configureTelegram(socialAuth: UspConfig, project: UspConfig, accountName: string) {
+  const target = ensureTarget(project, "telegram", accountName);
   note(
     [
       "Create a bot with BotFather, then add it to your channel/group if needed.",
@@ -474,19 +410,19 @@ async function configureTelegram(socialAuth: UspConfig, project: UspConfig) {
     "Telegram credentials"
   );
 
-  const account = ensureAccount(socialAuth, "telegram");
+  const account = ensureAccount(socialAuth, "telegram", accountName);
   account.botToken = assertNotCancel(await password({ message: "Telegram bot token" }));
-  target.chatId = assertNotCancel(
+  account.chatId = assertNotCancel(
     await text({
-      message: "Telegram chat_id",
+      message: "Default Telegram chat_id",
       placeholder: "@my_channel",
-      defaultValue: target.chatId?.startsWith("$") ? undefined : target.chatId,
+      defaultValue: String(account.chatId ?? target.chatId ?? ""),
     })
   );
 }
 
-async function configureAegea(socialAuth: UspConfig, project: UspConfig) {
-  ensureTarget(project, "aegea");
+async function configureAegea(socialAuth: UspConfig, project: UspConfig, accountName: string) {
+  ensureTarget(project, "aegea", accountName);
   note(
     [
       "Aegea posts use the normal author password flow.",
@@ -496,7 +432,7 @@ async function configureAegea(socialAuth: UspConfig, project: UspConfig) {
     "Aegea credentials"
   );
 
-  const account = ensureAccount(socialAuth, "aegea");
+  const account = ensureAccount(socialAuth, "aegea", accountName);
   account.baseUrl = assertNotCancel(
     await text({
       message: "Aegea base URL",
@@ -507,8 +443,8 @@ async function configureAegea(socialAuth: UspConfig, project: UspConfig) {
   account.password = assertNotCancel(await password({ message: "Aegea author password" }));
 }
 
-async function configureBluesky(socialAuth: UspConfig, project: UspConfig) {
-  ensureTarget(project, "bluesky");
+async function configureBluesky(socialAuth: UspConfig, project: UspConfig, accountName: string) {
+  ensureTarget(project, "bluesky", accountName);
   note(
     [
       "Create a Bluesky app password, not your main account password.",
@@ -518,7 +454,7 @@ async function configureBluesky(socialAuth: UspConfig, project: UspConfig) {
     "Bluesky credentials"
   );
 
-  const account = ensureAccount(socialAuth, "bluesky");
+  const account = ensureAccount(socialAuth, "bluesky", accountName);
   account.identifier = assertNotCancel(
     await text({
       message: "Bluesky handle or email",
@@ -536,8 +472,8 @@ async function configureBluesky(socialAuth: UspConfig, project: UspConfig) {
   );
 }
 
-async function configureMastodon(socialAuth: UspConfig, project: UspConfig) {
-  ensureTarget(project, "mastodon");
+async function configureMastodon(socialAuth: UspConfig, project: UspConfig, accountName: string) {
+  ensureTarget(project, "mastodon", accountName);
   note(
     [
       "Create an access token in your Mastodon instance preferences.",
@@ -547,7 +483,7 @@ async function configureMastodon(socialAuth: UspConfig, project: UspConfig) {
     "Mastodon credentials"
   );
 
-  const account = ensureAccount(socialAuth, "mastodon");
+  const account = ensureAccount(socialAuth, "mastodon", accountName);
   account.instanceUrl = assertNotCancel(
     await text({
       message: "Mastodon instance URL",
@@ -570,8 +506,8 @@ async function configureMastodon(socialAuth: UspConfig, project: UspConfig) {
   ) as "public" | "unlisted" | "private" | "direct";
 }
 
-async function configureDiscord(socialAuth: UspConfig, project: UspConfig) {
-  ensureTarget(project, "discord");
+async function configureDiscord(socialAuth: UspConfig, project: UspConfig, accountName: string) {
+  ensureTarget(project, "discord", accountName);
   note(
     [
       "Discord incoming webhooks post into one channel without a bot token.",
@@ -581,8 +517,15 @@ async function configureDiscord(socialAuth: UspConfig, project: UspConfig) {
     "Discord credentials"
   );
 
-  const account = ensureAccount(socialAuth, "discord");
+  const account = ensureAccount(socialAuth, "discord", accountName);
   account.webhookUrl = assertNotCancel(await password({ message: "Discord webhook URL" }));
+  account.threadId = assertNotCancel(
+    await text({
+      message: "Default Discord thread ID",
+      placeholder: "Optional",
+      defaultValue: typeof account.threadId === "string" ? account.threadId : "",
+    })
+  );
   account.username = assertNotCancel(
     await text({
       message: "Webhook display name",
@@ -590,6 +533,297 @@ async function configureDiscord(socialAuth: UspConfig, project: UspConfig) {
       defaultValue: typeof account.username === "string" ? account.username : "Ultimate Social Poster",
     })
   );
+  account.avatarUrl = assertNotCancel(
+    await text({
+      message: "Webhook avatar URL",
+      placeholder: "Optional",
+      defaultValue: typeof account.avatarUrl === "string" ? account.avatarUrl : "",
+    })
+  );
+}
+
+async function configureThreads(socialAuth: UspConfig, project: UspConfig, accountName: string) {
+  ensureTarget(project, "threads", accountName);
+  note(
+    [
+      "Create a Meta app with the Threads use case and request Threads publishing access.",
+      "Required scopes include threads_basic and threads_content_publish.",
+      "The user id can be left as me for the token owner.",
+    ].join("\n"),
+    "Threads credentials"
+  );
+
+  const account = ensureAccount(socialAuth, "threads", accountName);
+  account.accessToken = assertNotCancel(await password({ message: "Threads access token" }));
+  account.userId = assertNotCancel(
+    await text({
+      message: "Threads user id",
+      placeholder: "me",
+      defaultValue: typeof account.userId === "string" ? account.userId : "me",
+    })
+  );
+  account.replyControl = assertNotCancel(
+    await select({
+      message: "Who can reply",
+      initialValue: account.replyControl ?? "everyone",
+      options: [
+        { value: "everyone", label: "everyone" },
+        { value: "followers", label: "followers" },
+        { value: "mentioned_only", label: "mentioned only" },
+      ],
+    })
+  ) as "everyone" | "followers" | "mentioned_only";
+}
+
+async function deriveAccountName(platform: Platform, account: Record<string, unknown>) {
+  try {
+    if (platform === "telegram" && typeof account.botToken === "string") {
+      const response = await fetch(`https://api.telegram.org/bot${account.botToken}/getMe`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      const data = (await response.json().catch(() => undefined)) as
+        | { ok?: boolean; result?: { username?: string; first_name?: string } }
+        | undefined;
+      return data?.ok ? data.result?.username || data.result?.first_name : undefined;
+    }
+
+    if (platform === "discord" && typeof account.webhookUrl === "string") {
+      const response = await fetch(account.webhookUrl, { signal: AbortSignal.timeout(5000) });
+      const data = (await response.json().catch(() => undefined)) as
+        | { name?: string; channel_id?: string }
+        | undefined;
+      return data?.name || data?.channel_id || (typeof account.username === "string" ? account.username : undefined);
+    }
+
+    if (platform === "mastodon" && typeof account.instanceUrl === "string" && typeof account.accessToken === "string") {
+      const response = await fetch(`${account.instanceUrl.replace(/\/+$/, "")}/api/v1/accounts/verify_credentials`, {
+        headers: { authorization: `Bearer ${account.accessToken}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      const data = (await response.json().catch(() => undefined)) as { username?: string; acct?: string } | undefined;
+      return data?.acct || data?.username;
+    }
+
+    if (platform === "threads" && typeof account.accessToken === "string") {
+      const userId = typeof account.userId === "string" && account.userId.trim() ? account.userId.trim() : "me";
+      const url = new URL(`https://graph.threads.net/v1.0/${encodeURIComponent(userId)}`);
+      url.searchParams.set("fields", "id,username");
+      url.searchParams.set("access_token", account.accessToken);
+      const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const data = (await response.json().catch(() => undefined)) as { username?: string; id?: string } | undefined;
+      return data?.username || data?.id;
+    }
+  } catch {
+    // Verification-derived names are best effort; setup still lets the user choose a name.
+  }
+
+  if (platform === "bluesky" && typeof account.identifier === "string") {
+    return account.identifier.replace(/^@/, "");
+  }
+  if (platform === "reddit" && typeof account.username === "string") {
+    return account.username;
+  }
+  if (platform === "reddit" && typeof account.subreddit === "string") {
+    return account.subreddit;
+  }
+  if (platform === "linkedin" && typeof account.author === "string") {
+    return account.author.split(":").pop();
+  }
+  if (platform === "aegea" && typeof account.baseUrl === "string") {
+    return new URL(account.baseUrl).hostname;
+  }
+  if (platform === "discord" && typeof account.username === "string") {
+    return account.username;
+  }
+  if (platform === "threads" && typeof account.username === "string") {
+    return account.username;
+  }
+  return platform;
+}
+
+function renameProfileTarget(project: UspConfig, oldId: string, newId: string) {
+  for (const profile of Object.values(project.profiles ?? {})) {
+    profile.targets = profile.targets.map((id) => (id === oldId ? newId : id));
+  }
+}
+
+function renameAccount(project: UspConfig, socialAuth: UspConfig, platform: Platform, oldName: string, newName: string) {
+  if (oldName === newName) {
+    return;
+  }
+
+  const accounts = accountsFor(socialAuth, platform);
+  const account = accounts[oldName];
+  if (!account) {
+    return;
+  }
+  accounts[newName] = account;
+  delete accounts[oldName];
+
+  const oldTargetId = targetIdFor(platform, oldName);
+  const newTargetId = targetIdFor(platform, newName);
+  const target = project.targets?.[oldTargetId];
+  if (target) {
+    target.account = newName;
+    if (oldTargetId !== newTargetId && !project.targets?.[newTargetId]) {
+      project.targets![newTargetId] = target;
+      delete project.targets![oldTargetId];
+      renameProfileTarget(project, oldTargetId, newTargetId);
+    }
+  }
+}
+
+function deleteAccount(project: UspConfig, socialAuth: UspConfig, platform: Platform, accountName: string) {
+  const accounts = accountsFor(socialAuth, platform);
+  delete accounts[accountName];
+  const removedTargets = Object.entries(project.targets ?? {})
+    .filter(([, target]) => target.platform === platform && target.account === accountName)
+    .map(([id]) => id);
+  for (const id of removedTargets) {
+    delete project.targets?.[id];
+  }
+  for (const profile of Object.values(project.profiles ?? {})) {
+    profile.targets = profile.targets.filter((id) => !removedTargets.includes(id));
+  }
+}
+
+async function configurePlatformAccount(
+  platform: Platform,
+  socialAuth: UspConfig,
+  project: UspConfig,
+  accountName: string
+) {
+  if (platform === "x") {
+    await configureX(socialAuth, project, accountName);
+  } else if (platform === "linkedin") {
+    await configureLinkedIn(socialAuth, project, accountName);
+  } else if (platform === "reddit") {
+    await configureReddit(socialAuth, project, accountName);
+  } else if (platform === "telegram") {
+    await configureTelegram(socialAuth, project, accountName);
+  } else if (platform === "aegea") {
+    await configureAegea(socialAuth, project, accountName);
+  } else if (platform === "bluesky") {
+    await configureBluesky(socialAuth, project, accountName);
+  } else if (platform === "mastodon") {
+    await configureMastodon(socialAuth, project, accountName);
+  } else if (platform === "discord") {
+    await configureDiscord(socialAuth, project, accountName);
+  } else {
+    await configureThreads(socialAuth, project, accountName);
+  }
+
+  const account = accountsFor(socialAuth, platform)[accountName] ?? {};
+  const derived = safeSegment((await deriveAccountName(platform, account)) ?? accountName);
+  if (platform === "threads" && derived && derived !== "threads") {
+    account.username = derived;
+  }
+  const finalName = safeSegment(
+    assertNotCancel(
+      await text({
+        message: "Account name",
+        defaultValue: derived,
+        placeholder: derived,
+      })
+    )
+  );
+  renameAccount(project, socialAuth, platform, accountName, finalName);
+  ensureTarget(project, platform, finalName);
+  note(`${platform}.${finalName} saved.`, "Saved");
+}
+
+async function configureSocialPlatform(platform: Platform, socialAuth: UspConfig, project: UspConfig, projectPath: string) {
+  for (;;) {
+    const accounts = Object.keys(accountsFor(socialAuth, platform));
+    const choice = assertNotCancel(
+      await select({
+        message: `${platform} accounts`,
+        options: [
+          ...accounts.map((name) => ({ value: `edit:${name}`, label: name, hint: "Configure or delete" })),
+          { value: "add", label: "Add account" },
+          { value: "back", label: "Back" },
+        ],
+      })
+    ) as string;
+
+    if (choice === "back") {
+      return;
+    }
+
+    if (choice === "add") {
+      await configurePlatformAccount(platform, socialAuth, project, `__new_${Date.now()}`);
+      await writePlatformSocialAuth(platform, socialAuth);
+      await writeConfigFile(projectPath, project);
+      continue;
+    }
+
+    const accountName = choice.slice("edit:".length);
+    const action = assertNotCancel(
+      await select({
+        message: `${platform}.${accountName}`,
+        options: [
+          { value: "configure", label: "Configure" },
+          { value: "delete", label: "Delete" },
+          { value: "back", label: "Back" },
+        ],
+      })
+    ) as "configure" | "delete" | "back";
+
+    if (action === "back") {
+      continue;
+    }
+    if (action === "delete") {
+      deleteAccount(project, socialAuth, platform, accountName);
+      await writePlatformSocialAuth(platform, socialAuth);
+      await writeConfigFile(projectPath, project);
+      note(`${platform}.${accountName} deleted.`, "Deleted");
+      continue;
+    }
+    await configurePlatformAccount(platform, socialAuth, project, accountName);
+    await writePlatformSocialAuth(platform, socialAuth);
+    await writeConfigFile(projectPath, project);
+  }
+}
+
+async function configurePrompts(project: UspConfig) {
+  const platform = assertNotCancel(
+    await select({
+      message: "Prompt platform",
+      options: SOCIAL_PLATFORMS.map((item) => ({ value: item, label: item })),
+    })
+  ) as Platform;
+
+  const current = project.prompts?.[platform] ?? DEFAULT_PLATFORM_PROMPTS[platform];
+  note(current, `${platform} current prompt`);
+  const action = assertNotCancel(
+    await select({
+      message: "Change prompt",
+      options: [
+        { value: "append", label: "Append" },
+        { value: "replace", label: "Replace" },
+        { value: "revert", label: "Revert to original" },
+        { value: "back", label: "Back" },
+      ],
+    })
+  ) as "append" | "replace" | "revert" | "back";
+
+  if (action === "back") {
+    return;
+  }
+  project.prompts ??= {};
+  if (action === "revert") {
+    delete project.prompts[platform];
+    note("Default prompt restored.", "Saved");
+    return;
+  }
+  const value = assertNotCancel(
+    await text({
+      message: action === "append" ? "Prompt text to append" : "Replacement prompt",
+      placeholder: "Return JSON only...",
+    })
+  );
+  project.prompts[platform] = action === "append" ? [current, "", value].join("\n") : value;
+  note("Prompt saved.", "Saved");
 }
 
 async function runInteractiveSetup() {
@@ -610,10 +844,11 @@ async function runInteractiveSetup() {
         options: [
           { value: "llm", label: "LLM provider", hint: llmStatus(project, socialAuth) },
           { value: "social", label: "Social auth", hint: socialSummary(project, socialAuth) },
+          { value: "prompts", label: "Prompts", hint: "Customize platform prompts" },
           { value: "exit", label: "Exit" },
         ],
       })
-    ) as "llm" | "social" | "exit";
+    ) as "llm" | "social" | "prompts" | "exit";
 
     if (section === "exit") {
       await writeLlmAuth({ llm: socialAuth.llm });
@@ -630,6 +865,12 @@ async function runInteractiveSetup() {
       continue;
     }
 
+    if (section === "prompts") {
+      await configurePrompts(project);
+      await writeConfigFile(loadedProject.path, project);
+      continue;
+    }
+
     const platform = assertNotCancel(
       await select({
         message: "Social auth",
@@ -642,6 +883,7 @@ async function runInteractiveSetup() {
           { value: "bluesky", label: "Bluesky", hint: `API posts and threads, ${statusHint(platformStatus(project, socialAuth, "bluesky"))}` },
           { value: "mastodon", label: "Mastodon", hint: `Instance API posts and threads, ${statusHint(platformStatus(project, socialAuth, "mastodon"))}` },
           { value: "discord", label: "Discord", hint: `Incoming webhook, ${statusHint(platformStatus(project, socialAuth, "discord"))}` },
+          { value: "threads", label: "Threads", hint: `API posts and reply chains, ${statusHint(platformStatus(project, socialAuth, "threads"))}` },
           { value: "back", label: "Back" },
         ],
       })
@@ -651,41 +893,21 @@ async function runInteractiveSetup() {
       continue;
     }
 
-    if (platform === "x") {
-      await configureX(socialAuth, project);
-    } else if (platform === "linkedin") {
-      await configureLinkedIn(socialAuth, project);
-    } else if (platform === "reddit") {
-      await configureReddit(socialAuth, project);
-    } else if (platform === "telegram") {
-      await configureTelegram(socialAuth, project);
-    } else if (platform === "aegea") {
-      await configureAegea(socialAuth, project);
-    } else if (platform === "bluesky") {
-      await configureBluesky(socialAuth, project);
-    } else if (platform === "mastodon") {
-      await configureMastodon(socialAuth, project);
-    } else if (platform === "discord") {
-      await configureDiscord(socialAuth, project);
-    }
-
-    await writePlatformSocialAuth(platform, ensureAccount(socialAuth, platform));
-    await writeConfigFile(loadedProject.path, project);
-    note(`${platform} settings saved. Pick another section or Exit.`, "Saved");
+    await configureSocialPlatform(platform, socialAuth, project, loadedProject.path);
   }
 }
 
 export async function setupCommand(options: { platform?: Platform; account?: string; value?: string[] } = {}) {
   if (options.platform) {
     await ensureProjectConfig();
-    if (!["x", "linkedin", "reddit", "telegram", "aegea", "bluesky", "mastodon", "discord"].includes(options.platform)) {
+    if (!["x", "linkedin", "reddit", "telegram", "aegea", "bluesky", "mastodon", "discord", "threads"].includes(options.platform)) {
       throw new Error(`Unsupported platform: ${options.platform}`);
     }
     const config = await loadSocialAuthConfig();
     const name = options.account ?? PLATFORM_ACCOUNT_NAMES[options.platform];
     const account = ensureAccount(config, options.platform, name);
     applyValues(account, options.value);
-    const path = await writePlatformSocialAuth(options.platform, account, name);
+    const path = await writePlatformSocialAuth(options.platform, config);
     console.log(`Saved ${options.platform}.${name} credentials to ${path}`);
     return;
   }

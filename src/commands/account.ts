@@ -15,7 +15,7 @@ export async function accountSetCommand(
   name: string,
   options: { value?: string[] }
 ) {
-  if (!["x", "linkedin", "reddit", "telegram", "aegea", "bluesky", "mastodon", "discord"].includes(platform)) {
+  if (!["x", "linkedin", "reddit", "telegram", "aegea", "bluesky", "mastodon", "discord", "threads"].includes(platform)) {
     throw new Error(`Unsupported platform: ${platform}`);
   }
 

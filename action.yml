@@ -14,14 +14,6 @@ inputs:
     description: Config profile to publish.
     required: false
     default: default
-  dry_run:
-    description: If true, generate and print without publishing.
-    required: false
-    default: "false"
-  json:
-    description: If true, print machine-readable JSON output.
-    required: false
-    default: "false"
 
 runs:
   using: composite
@@ -47,8 +39,6 @@ runs:
         node "${{ github.action_path }}/dist/cli.js" publish "${{ inputs.markdown }}"
         --config "${{ inputs.config }}"
         --profile "${{ inputs.profile }}"
-        ${{ inputs.dry_run == 'true' && '--dry-run' || '' }}
-        ${{ inputs.json == 'true' && '--json' || '' }}
 
 branding:
   icon: send

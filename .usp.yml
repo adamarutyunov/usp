@@ -27,7 +27,7 @@ targets:
   telegram-channel:
     platform: telegram
     account: main
-    chatId: $TELEGRAM_CHAT_ID
+    chatId: "@sejqlkneljkwrbe"
   aegea-blog:
     platform: aegea
     account: main
@@ -78,3 +78,4 @@ accounts:
     main:
       webhookUrlEnv: DISCORD_WEBHOOK_URL
       username: Ultimate Social Poster
+prompts: {}

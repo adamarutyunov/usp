@@ -7,15 +7,10 @@ async function getAccessToken(context: PublishContext) {
     throw new Error(`Missing Reddit account "${context.target.account}".`);
   }
 
-  const clientId = resolveSecret(account.clientId, account.clientIdEnv, "Reddit client id", "REDDIT_CLIENT_ID");
-  const clientSecret = resolveSecret(
-    account.clientSecret,
-    account.clientSecretEnv,
-    "Reddit client secret",
-    "REDDIT_CLIENT_SECRET"
-  );
-  const refreshToken = optionalSecret(account.refreshToken, account.refreshTokenEnv, "REDDIT_REFRESH_TOKEN");
-  const userAgent = account.userAgent ?? process.env.REDDIT_USER_AGENT ?? "usp/0.1.0";
+  const clientId = resolveSecret(account.clientId, "Reddit client id");
+  const clientSecret = resolveSecret(account.clientSecret, "Reddit client secret");
+  const refreshToken = optionalSecret(account.refreshToken);
+  const userAgent = account.userAgent ?? "usp/0.1.0";
   const body = new URLSearchParams();
 
   if (refreshToken) {
@@ -23,8 +18,8 @@ async function getAccessToken(context: PublishContext) {
     body.set("refresh_token", refreshToken);
   } else {
     body.set("grant_type", "password");
-    body.set("username", resolveSecret(account.username, account.usernameEnv, "Reddit username", "REDDIT_USERNAME"));
-    body.set("password", resolveSecret(account.password, account.passwordEnv, "Reddit password", "REDDIT_PASSWORD"));
+    body.set("username", resolveSecret(account.username, "Reddit username"));
+    body.set("password", resolveSecret(account.password, "Reddit password"));
   }
 
   const response = await fetch("https://www.reddit.com/api/v1/access_token", {
