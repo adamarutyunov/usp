@@ -1,4 +1,4 @@
-import type { TargetConfig, UspConfig } from "../types.js";
+import type { PostMode, TargetConfig, UspConfig } from "../types.js";
 import { optionalSecret } from "../util/secrets.js";
 
 function hasValue(value: unknown) {
@@ -137,6 +137,22 @@ export function resolveTargets(config: UspConfig, options: { profile?: string; t
     }
     return { id, config: target as TargetConfig };
   });
+}
+
+export function listReadyTargets(config: UspConfig) {
+  const allTargets = config.targets ?? {};
+  return Object.entries(allTargets)
+    .filter(([, target]) => getTargetReadiness(config, target as TargetConfig).ready)
+    .map(([id, target]) => ({ id, config: target as TargetConfig }));
+}
+
+export function resolveInitialPostMode(config: UspConfig, id: string, profileName = "default"): PostMode {
+  const explicit = config.postingDefaults?.[id];
+  if (explicit) {
+    return explicit;
+  }
+  const profileTargets = config.profiles?.[profileName]?.targets ?? [];
+  return profileTargets.includes(id) ? "llm" : "off";
 }
 
 export function filterReadyTargets(

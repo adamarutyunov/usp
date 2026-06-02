@@ -8,9 +8,11 @@ import { LlmPlatformPlanner } from "../pipeline/planner.js";
 import { AdapterPoster } from "../posting/poster.js";
 import { PreviewStore } from "../preview/store.js";
 import { ConfigPromptProvider, parsePromptOverride } from "../prompt/provider.js";
-import type { PlatformPlan, PublishTargetResult } from "../types.js";
+import type { PlatformPlan, PostMode, PublishTargetResult } from "../types.js";
 import { createNoopSpinner, createSpinner, platformName, printError, printPlatformText, printWarning } from "../util/display.js";
-import { filterReadyTargets, resolveTargets } from "./targets.js";
+import type { TargetRef } from "../pipeline/contracts.js";
+import { pickPostTargets, type PostTargetRow } from "./post-picker.js";
+import { filterReadyTargets, listReadyTargets, resolveInitialPostMode, resolveTargets } from "./targets.js";
 
 function printHumanResults(results: PublishTargetResult[]) {
   for (const result of results) {
@@ -160,22 +162,56 @@ type PublishOptions = {
   stdin?: boolean;
 };
 
+async function resolvePublishTargets(
+  config: Awaited<ReturnType<typeof loadConfig>>,
+  options: PublishOptions
+): Promise<TargetRef[]> {
+  const interactive = !options.target?.length && !options.stdin && Boolean(process.stdout.isTTY);
+
+  if (interactive) {
+    const ready = listReadyTargets(config);
+    if (ready.length === 0) {
+      throw new Error("No configured targets to publish to. Run `usp setup`.");
+    }
+    const rows: PostTargetRow[] = ready.map((target) => ({
+      id: target.id,
+      platform: target.config.platform,
+      account: target.config.account,
+      mode: resolveInitialPostMode(config, target.id, options.profile),
+    }));
+    const selection = await pickPostTargets(rows);
+    if (selection === null) {
+      cancel("Publish cancelled.");
+      process.exit(0);
+    }
+    const chosen = selection.filter((row) => row.mode !== "off");
+    if (chosen.length === 0) {
+      throw new Error("No targets selected.");
+    }
+    const configById = new Map(ready.map((target) => [target.id, target.config]));
+    return chosen.map((row) => ({ id: row.id, config: configById.get(row.id)!, postMode: row.mode }));
+  }
+
+  const targets = resolveTargets(config, { profile: options.profile, targets: options.target });
+  const { ready, skipped } = filterReadyTargets(config, targets, {
+    explicitTargets: Boolean(options.target?.length),
+  });
+  for (const target of skipped) {
+    console.warn(`Skipping ${target.id}: ${target.reason}`);
+  }
+  if (ready.length === 0) {
+    throw new Error("No configured targets to publish to. Run `usp setup` or pass a configured --target.");
+  }
+  return ready.map((target) => ({ ...target, postMode: "llm" as PostMode }));
+}
+
 async function runPublishFlow(
   file: string | undefined,
   options: PublishOptions,
   mode: "publish" | "preview"
 ) {
   const config = await loadConfig({ configPath: options.config, overrides: options.set });
-  const targets = resolveTargets(config, { profile: options.profile, targets: options.target });
-  const { ready: locallyReady, skipped: localSkipped } = filterReadyTargets(config, targets, {
-    explicitTargets: Boolean(options.target?.length),
-  });
-  for (const target of localSkipped) {
-    console.warn(`Skipping ${target.id}: ${target.reason}`);
-  }
-  if (locallyReady.length === 0) {
-    throw new Error("No configured targets to publish to. Run `usp setup` or pass a configured --target.");
-  }
+  const locallyReady = await resolvePublishTargets(config, options);
   const pipeline = createPipeline(file, options, config);
   const previewStore = new PreviewStore();
   const { plan, results } = await pipeline.publish({

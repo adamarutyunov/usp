@@ -45,6 +45,17 @@ class RecordingPoster extends Poster {
   }
 }
 
+class ModeAwarePlanner extends PlatformPlanner {
+  readonly calls: string[] = [];
+
+  async plan(request: PlanRequest): Promise<PlatformPlan> {
+    const mode = request.target.postMode ?? "llm";
+    const key = `${request.target.config.platform}:${mode}`;
+    this.calls.push(key);
+    return { units: [{ text: key }] };
+  }
+}
+
 function input(): PipelineInput {
   return {
     inputPath: "/tmp/post.md",
@@ -108,5 +119,43 @@ describe("PublishPipeline preview support", () => {
     expect(planner.calls).toEqual(["x-alt"]);
     expect(result.results.map((item) => item.posts[0]?.text)).toEqual(["cached x-main", "generated x-alt"]);
     await expect(fs.readdir(result.previewDir!)).resolves.toEqual(["x-alt-x-alt.json", "x-main-x-main.json"]);
+  });
+});
+
+describe("PublishPipeline mode handling (no preview)", () => {
+  it("plans separately per platform+mode and posts per-target plans", async () => {
+    const planner = new ModeAwarePlanner();
+    const poster = new RecordingPoster();
+    const pipeline = new PublishPipeline(new StaticInputSource(input()), planner, poster);
+
+    const result = await pipeline.publish({
+      config,
+      dryRun: true,
+      targets: [
+        { id: "x-llm", config: { platform: "x", account: "main" }, postMode: "llm" },
+        { id: "x-raw", config: { platform: "x", account: "main" }, postMode: "as-is" },
+      ],
+    });
+
+    expect(planner.calls).toEqual(["x:llm", "x:as-is"]);
+    expect(result.results.map((item) => item.posts[0]?.text)).toEqual(["x:llm", "x:as-is"]);
+  });
+
+  it("dedupes planning for same platform and mode", async () => {
+    const planner = new ModeAwarePlanner();
+    const poster = new RecordingPoster();
+    const pipeline = new PublishPipeline(new StaticInputSource(input()), planner, poster);
+
+    const result = await pipeline.publish({
+      config,
+      dryRun: true,
+      targets: [
+        { id: "x-main", config: { platform: "x", account: "main" }, postMode: "llm" },
+        { id: "x-alt", config: { platform: "x", account: "alt" }, postMode: "llm" },
+      ],
+    });
+
+    expect(planner.calls).toEqual(["x:llm"]);
+    expect(result.results.map((item) => item.posts[0]?.text)).toEqual(["x:llm", "x:llm"]);
   });
 });

@@ -11,14 +11,16 @@ import {
 
 import {
   findProjectConfig,
+  loadGlobalConfig,
   loadProjectConfig,
   loadSocialAuthConfig,
   writeConfigFile,
+  writeGlobalConfig,
   writeProjectConfig,
   writeSocialAuthConfig,
 } from "../config/config.js";
 import { DEFAULT_PLATFORM_PROMPTS } from "../llm/prompts.js";
-import type { LlmProvider, Platform, UspConfig } from "../types.js";
+import type { LlmProvider, Platform, PostMode, UspConfig } from "../types.js";
 import { SAMPLE_CONFIG } from "./init.js";
 
 const PLATFORM_ACCOUNT_NAMES: Record<Platform, string> = {
@@ -826,6 +828,54 @@ async function configurePrompts(project: UspConfig) {
   note("Prompt saved.", "Saved");
 }
 
+async function configurePostingDefaults(project: UspConfig) {
+  const targetIds = Object.keys(project.targets ?? {});
+  if (targetIds.length === 0) {
+    note("No targets configured yet. Add social accounts first.", "Default posting");
+    return;
+  }
+
+  const global = await loadGlobalConfig();
+  global.postingDefaults ??= {};
+
+  for (;;) {
+    const choice = assertNotCancel(
+      await select({
+        message: "Default posting state per target",
+        options: [
+          ...targetIds.map((id) => ({
+            value: id,
+            label: id,
+            hint: global.postingDefaults?.[id] ?? "unset",
+          })),
+          { value: "__back", label: "Back" },
+        ],
+      })
+    ) as string;
+
+    if (choice === "__back") {
+      return;
+    }
+
+    const current = (global.postingDefaults?.[choice] ?? "off") as PostMode;
+    const mode = assertNotCancel(
+      await select({
+        message: `Default for ${choice}`,
+        initialValue: current,
+        options: [
+          { value: "off", label: "Off", hint: "Not pre-selected in the publish picker" },
+          { value: "as-is", label: "As-is", hint: "Post raw text, no LLM processing" },
+          { value: "llm", label: "LLM", hint: "Process with the LLM" },
+        ],
+      })
+    ) as PostMode;
+
+    global.postingDefaults![choice] = mode;
+    await writeGlobalConfig(global);
+    note(`${choice} default set to ${mode}.`, "Saved");
+  }
+}
+
 async function runInteractiveSetup() {
   intro("usp setup");
   const projectPath = await ensureProjectConfig();
@@ -845,10 +895,11 @@ async function runInteractiveSetup() {
           { value: "llm", label: "LLM provider", hint: llmStatus(project, socialAuth) },
           { value: "social", label: "Social auth", hint: socialSummary(project, socialAuth) },
           { value: "prompts", label: "Prompts", hint: "Customize platform prompts" },
+          { value: "posting", label: "Default posting", hint: "Per-target defaults for the publish picker" },
           { value: "exit", label: "Exit" },
         ],
       })
-    ) as "llm" | "social" | "prompts" | "exit";
+    ) as "llm" | "social" | "prompts" | "posting" | "exit";
 
     if (section === "exit") {
       await writeLlmAuth({ llm: socialAuth.llm });
@@ -868,6 +919,11 @@ async function runInteractiveSetup() {
     if (section === "prompts") {
       await configurePrompts(project);
       await writeConfigFile(loadedProject.path, project);
+      continue;
+    }
+
+    if (section === "posting") {
+      await configurePostingDefaults(project);
       continue;
     }
 

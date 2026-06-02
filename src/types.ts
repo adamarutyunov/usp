@@ -11,6 +11,8 @@ export type Platform =
 
 export type LlmProvider = "gemini" | "openai" | "anthropic";
 
+export type PostMode = "off" | "as-is" | "llm";
+
 export type JsonObject = Record<string, unknown>;
 
 export type SecretValue = string | undefined;
@@ -125,6 +127,7 @@ export type UspConfig = {
   targets?: Record<string, TargetConfig>;
   profiles?: Record<string, ProfileConfig>;
   prompts?: Partial<Record<Platform, string>>;
+  postingDefaults?: Record<string, PostMode>;
 };
 
 export type SourceMedia = {

@@ -2,6 +2,7 @@ import type {
   MarkdownInput,
   Platform,
   PlatformPlan,
+  PostMode,
   PublishPlan,
   PublishTargetResult,
   SourceMedia,
@@ -12,6 +13,7 @@ import type {
 export type TargetRef = {
   id: string;
   config: TargetConfig;
+  postMode?: PostMode;
 };
 
 export type PipelineInput = MarkdownInput;

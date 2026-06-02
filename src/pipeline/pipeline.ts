@@ -132,7 +132,7 @@ export class PublishPipeline {
     const input = await this.inputSource.read();
     const plan = createEmptyPlan(input);
     const results: PublishTargetResult[] = [];
-    const plannedPlatforms = new Set<Platform>();
+    const plannedByKey = new Map<string, PublishPlan["platforms"][Platform]>();
     const previewSession = preview?.store.open(input);
     const previewDir = previewSession?.dir;
     const previewExists = previewSession ? await previewSession.exists() : false;
@@ -222,18 +222,22 @@ export class PublishPipeline {
         continue;
       }
 
-      if (!plannedPlatforms.has(platform)) {
+      const planKey = `${platform}:${target.postMode ?? "llm"}`;
+      let targetPlan = plannedByKey.get(planKey);
+      if (!targetPlan) {
         hooks.onPrepareStart?.(target);
         try {
-          plan.platforms[platform] = await this.planner.plan({ input, target, config });
-          plannedPlatforms.add(platform);
-          hooks.onPrepareSuccess?.(target, plan.platforms[platform]!);
+          targetPlan = await this.planner.plan({ input, target, config });
+          plannedByKey.set(planKey, targetPlan);
+          hooks.onPrepareSuccess?.(target, targetPlan);
         } catch (error) {
           hooks.onPrepareError?.(target, error);
           results.push(errorResult(target, error, dryRun));
           continue;
         }
       }
+      plan.targets![target.id] = targetPlan;
+      plan.platforms[platform] = targetPlan;
 
       if (dryRun) {
         results.push(
