@@ -120,13 +120,19 @@ export type ProfileConfig = {
   targets: string[];
 };
 
+/** Layer 3: a user override that appends to or replaces the built-in prompt layers. */
+export type PromptLayer = {
+  mode: "append" | "replace";
+  text: string;
+};
+
 export type UspConfig = {
   llm?: LlmConfig;
   accounts?: AccountsConfig;
   browserAuth?: BrowserAuthConfig;
   targets?: Record<string, TargetConfig>;
   profiles?: Record<string, ProfileConfig>;
-  prompts?: Partial<Record<Platform, string>>;
+  prompts?: Partial<Record<Platform, PromptLayer>>;
   postingDefaults?: Record<string, PostMode>;
 };
 

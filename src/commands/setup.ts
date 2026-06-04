@@ -1,5 +1,4 @@
 import {
-  cancel,
   intro,
   isCancel,
   note,
@@ -8,6 +7,7 @@ import {
   select,
   text,
 } from "@clack/prompts";
+import pc from "yoctocolors";
 
 import {
   findProjectConfig,
@@ -20,8 +20,10 @@ import {
   writeSocialAuthConfig,
 } from "../config/config.js";
 import { DEFAULT_PLATFORM_PROMPTS } from "../llm/prompts.js";
-import type { LlmProvider, Platform, PostMode, UspConfig } from "../types.js";
+import type { LlmProvider, Platform, TargetConfig, UspConfig } from "../types.js";
 import { SAMPLE_CONFIG } from "./init.js";
+import { pickPostTargets, type PostTargetRow } from "./post-picker.js";
+import { getTargetReadiness } from "./targets.js";
 
 const PLATFORM_ACCOUNT_NAMES: Record<Platform, string> = {
   x: "main",
@@ -65,6 +67,12 @@ const LLM_DEFAULTS: Record<LlmProvider, { model: string; keyUrl: string; label: 
   },
 };
 
+const MODEL_SUGGESTIONS: Record<LlmProvider, string[]> = {
+  anthropic: ["claude-opus-4-8", "claude-sonnet-4-5", "claude-haiku-4-5"],
+  openai: ["gpt-5.4", "gpt-5.4-mini"],
+  gemini: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+};
+
 const SOCIAL_PLATFORMS: Platform[] = [
   "x",
   "linkedin",
@@ -77,10 +85,12 @@ const SOCIAL_PLATFORMS: Platform[] = [
   "threads",
 ];
 
-function assertNotCancel<T>(value: T | symbol): T {
+/** Thrown when a prompt is cancelled (Esc / Ctrl+C). Caught by the nearest menu loop, which treats it as "back". */
+class SetupBack {}
+
+function orBack<T>(value: T | symbol): T {
   if (isCancel(value)) {
-    cancel("Setup cancelled.");
-    process.exit(0);
+    throw new SetupBack();
   }
   return value;
 }
@@ -160,10 +170,6 @@ function ensureTarget(project: UspConfig, platform: Platform, accountName = PLAT
   return project.targets[id]!;
 }
 
-function hasValue(value: unknown) {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
 function accountsFor(config: UspConfig, platform: Platform) {
   return (config.accounts?.[platform] ?? {}) as Record<string, Record<string, unknown>>;
 }
@@ -175,89 +181,37 @@ function llmStatus(project: UspConfig, socialAuth: UspConfig) {
   }
 
   const auth = llm.authToken ? "Claude token" : llm.apiKey ? "API key" : "auth pending";
-  return `${llm.provider}, ${auth}`;
+  const model = llm.model ?? LLM_DEFAULTS[llm.provider].model;
+  return `${llm.provider}, ${auth}, ${model}`;
 }
 
-function platformStatus(project: UspConfig, socialAuth: UspConfig, platform: Platform) {
-  const accounts = accountsFor(socialAuth, platform);
-  const statuses = Object.entries(accounts).map(([accountName, account]) => {
-    const target = Object.values(project.targets ?? {}).find(
-      (item) => item.platform === platform && item.account === accountName
-    );
+const PLATFORM_INFO: Record<Platform, { label: string; hint: string }> = {
+  x: { label: "X", hint: "API posting with media" },
+  linkedin: { label: "LinkedIn", hint: "Personal profile posts" },
+  reddit: { label: "Reddit", hint: "One subreddit target" },
+  telegram: { label: "Telegram", hint: "Channel, group, or chat" },
+  aegea: { label: "Aegea", hint: "Blog post via password login" },
+  bluesky: { label: "Bluesky", hint: "API posts and threads" },
+  mastodon: { label: "Mastodon", hint: "Instance API posts and threads" },
+  discord: { label: "Discord", hint: "Incoming webhook" },
+  threads: { label: "Threads", hint: "API posts and reply chains" },
+};
 
-    if (platform === "x") {
-      return account &&
-      hasValue(account.consumerKey) &&
-      hasValue(account.consumerSecret) &&
-      hasValue(account.accessToken) &&
-      hasValue(account.accessTokenSecret)
-      ? "set"
-      : "not set";
-    }
+function targetStatusHint(socialAuth: UspConfig, target: TargetConfig) {
+  const readiness = getTargetReadiness(socialAuth, target);
+  return readiness.ready ? "configured" : readiness.reason ?? "not configured";
+}
 
-    if (platform === "linkedin") {
-      return account && hasValue(account.accessToken) && hasValue(account.author) ? "set" : "not set";
-    }
-
-    if (platform === "reddit") {
-      return account &&
-      hasValue(account.clientId) &&
-      hasValue(account.clientSecret) &&
-      (hasValue(account.refreshToken) || (hasValue(account.username) && hasValue(account.password))) &&
-      hasValue(account.subreddit || target?.subreddit)
-      ? "set"
-      : "not set";
-    }
-
-    if (platform === "telegram") {
-      return account && hasValue(account.botToken) && hasValue(account.chatId || target?.chatId) ? "set" : "not set";
-    }
-
-    if (platform === "aegea") {
-      return account && hasValue(account.baseUrl) && hasValue(account.password) ? "set" : "not set";
-    }
-
-    if (platform === "bluesky") {
-      return account && hasValue(account.identifier) && hasValue(account.appPassword) ? "set" : "not set";
-    }
-
-    if (platform === "mastodon") {
-      return account && hasValue(account.instanceUrl) && hasValue(account.accessToken) ? "set" : "not set";
-    }
-
-    if (platform === "threads") {
-      return account && hasValue(account.accessToken) ? "set" : "not set";
-    }
-
-    return account && hasValue(account.webhookUrl) ? "set" : "not set";
-  });
-
-  if (statuses.length === 0) {
-    return "not set";
+function targetsSummary(project: UspConfig, socialAuth: UspConfig) {
+  const targets = Object.values(project.targets ?? {});
+  if (targets.length === 0) {
+    return "none yet";
   }
-  return statuses.every((item) => item === "set") ? `${statuses.length} configured` : `${statuses.length} partial`;
+  const ready = targets.filter((target) => getTargetReadiness(socialAuth, target).ready).length;
+  return `${targets.length} configured, ${ready} ready`;
 }
 
-function statusHint(status: string) {
-  return status === "set" ? "configured" : status;
-}
-
-function socialSummary(project: UspConfig, socialAuth: UspConfig) {
-  return SOCIAL_PLATFORMS.map((platform) => `${platform}: ${platformStatus(project, socialAuth, platform)}`).join(", ");
-}
-
-async function configureLlm(project: UspConfig, socialAuth: UspConfig) {
-  const provider = assertNotCancel(
-    await select({
-      message: "Choose your LLM provider",
-      initialValue: project.llm?.provider ?? "anthropic",
-      options: [
-        { value: "anthropic", label: "Anthropic", hint: "Claude, recommended" },
-        { value: "openai", label: "OpenAI", hint: "GPT models" },
-        { value: "gemini", label: "Gemini", hint: "Google AI Studio" },
-      ],
-    })
-  ) as LlmProvider;
+async function authenticateLlm(provider: LlmProvider, model: string, project: UspConfig, socialAuth: UspConfig) {
   const defaults = LLM_DEFAULTS[provider];
 
   if (provider === "anthropic") {
@@ -268,7 +222,7 @@ async function configureLlm(project: UspConfig, socialAuth: UspConfig) {
       ].join("\n"),
       "Anthropic auth"
     );
-    const mode = assertNotCancel(
+    const mode = orBack(
       await select({
         message: "How should usp authenticate Anthropic?",
         initialValue: "auth-paste",
@@ -279,32 +233,95 @@ async function configureLlm(project: UspConfig, socialAuth: UspConfig) {
       })
     ) as "auth-paste" | "api-paste";
 
-    project.llm = {
-      provider,
-      model: defaults.model,
-    };
+    project.llm = { provider, model };
     socialAuth.llm =
       mode === "auth-paste"
-        ? {
-            provider,
-            model: defaults.model,
-            authToken: assertNotCancel(await password({ message: "Claude setup-token result" })),
-          }
-        : {
-            provider,
-            model: defaults.model,
-            apiKey: assertNotCancel(await password({ message: "Anthropic API key" })),
-          };
+        ? { provider, model, authToken: orBack(await password({ message: "Claude setup-token result" })) }
+        : { provider, model, apiKey: orBack(await password({ message: "Anthropic API key" })) };
     return;
   }
 
   note(`Create or copy an API key here: ${defaults.keyUrl}`, `${defaults.label} key`);
-  project.llm = { provider, model: defaults.model };
+  project.llm = { provider, model };
   socialAuth.llm = {
     provider,
-    model: defaults.model,
-    apiKey: assertNotCancel(await password({ message: `${defaults.label} API key` })),
+    model,
+    apiKey: orBack(await password({ message: `${defaults.label} API key` })),
   };
+}
+
+async function selectLlmModel(provider: LlmProvider, currentModel: string) {
+  const suggestions = MODEL_SUGGESTIONS[provider];
+  const choice = orBack(
+    await select({
+      message: "Model",
+      initialValue: currentModel,
+      options: [
+        ...suggestions.map((id) => ({ value: id, label: id, ...(id === currentModel ? { hint: "current" } : {}) })),
+        ...(suggestions.includes(currentModel) ? [] : [{ value: currentModel, label: currentModel, hint: "current" }]),
+        { value: "__custom", label: "Custom…", hint: "Enter a model id" },
+      ],
+    })
+  ) as string;
+
+  if (choice !== "__custom") {
+    return choice;
+  }
+  const custom = orBack(
+    await text({ message: "Model id", defaultValue: currentModel, placeholder: currentModel })
+  );
+  return custom.trim() || currentModel;
+}
+
+async function configureLlm(project: UspConfig, socialAuth: UspConfig) {
+  const authedProvider = socialAuth.llm?.provider;
+  const provider = orBack(
+    await select({
+      message: "Choose your LLM provider",
+      initialValue: authedProvider ?? project.llm?.provider ?? "anthropic",
+      options: [
+        { value: "anthropic", label: "Anthropic", hint: "Claude, recommended" },
+        { value: "openai", label: "OpenAI", hint: "GPT models" },
+        { value: "gemini", label: "Gemini", hint: "Google AI Studio" },
+      ],
+    })
+  ) as LlmProvider;
+
+  const currentModel =
+    (socialAuth.llm?.provider === provider && socialAuth.llm.model) ||
+    (project.llm?.provider === provider && project.llm.model) ||
+    LLM_DEFAULTS[provider].model;
+
+  // A provider that isn't authenticated yet has nothing to "change" — go straight to auth.
+  if (provider !== authedProvider) {
+    await authenticateLlm(provider, currentModel, project, socialAuth);
+    return;
+  }
+
+  const authLabel = socialAuth.llm?.authToken ? "Claude token" : socialAuth.llm?.apiKey ? "API key" : "auth pending";
+  const action = orBack(
+    await select({
+      message: `${LLM_DEFAULTS[provider].label} setup`,
+      options: [
+        { value: "reauth", label: "Reauthenticate", hint: authLabel },
+        { value: "model", label: "Change model", hint: currentModel },
+        { value: "back", label: "Back" },
+      ],
+    })
+  ) as "reauth" | "model" | "back";
+
+  if (action === "back") {
+    return;
+  }
+  if (action === "model") {
+    const model = await selectLlmModel(provider, currentModel);
+    project.llm = { provider, model };
+    socialAuth.llm = { ...(socialAuth.llm ?? {}), provider, model };
+    note(`Model set to ${model}.`, "Saved");
+    return;
+  }
+
+  await authenticateLlm(provider, currentModel, project, socialAuth);
 }
 
 async function configureX(socialAuth: UspConfig, project: UspConfig, accountName: string) {
@@ -319,10 +336,10 @@ async function configureX(socialAuth: UspConfig, project: UspConfig, accountName
   );
 
   const account = ensureAccount(socialAuth, "x", accountName);
-  account.consumerKey = assertNotCancel(await password({ message: "X consumer key" }));
-  account.consumerSecret = assertNotCancel(await password({ message: "X consumer secret" }));
-  account.accessToken = assertNotCancel(await password({ message: "X access token" }));
-  account.accessTokenSecret = assertNotCancel(await password({ message: "X access token secret" }));
+  account.consumerKey = orBack(await password({ message: "X consumer key" }));
+  account.consumerSecret = orBack(await password({ message: "X consumer secret" }));
+  account.accessToken = orBack(await password({ message: "X access token" }));
+  account.accessTokenSecret = orBack(await password({ message: "X access token secret" }));
 }
 
 async function configureLinkedIn(socialAuth: UspConfig, project: UspConfig, accountName: string) {
@@ -338,9 +355,9 @@ async function configureLinkedIn(socialAuth: UspConfig, project: UspConfig, acco
   );
 
   const account = ensureAccount(socialAuth, "linkedin", accountName);
-  account.accessToken = assertNotCancel(await password({ message: "LinkedIn access token" }));
-  account.author = assertNotCancel(await text({ message: "LinkedIn personal author URN" }));
-  account.version = assertNotCancel(
+  account.accessToken = orBack(await password({ message: "LinkedIn access token" }));
+  account.author = orBack(await text({ message: "LinkedIn personal author URN" }));
+  account.version = orBack(
     await text({
       message: "LinkedIn API version",
       placeholder: "202602",
@@ -361,17 +378,17 @@ async function configureReddit(socialAuth: UspConfig, project: UspConfig, accoun
   );
 
   const account = ensureAccount(socialAuth, "reddit", accountName);
-  account.subreddit = assertNotCancel(
+  account.subreddit = orBack(
     await text({
       message: "Default subreddit for this account",
       placeholder: "reddit_api_test",
       defaultValue: String(account.subreddit ?? target.subreddit ?? "reddit_api_test"),
     })
   );
-  account.clientId = assertNotCancel(await password({ message: "Reddit client id" }));
-  account.clientSecret = assertNotCancel(await password({ message: "Reddit client secret" }));
+  account.clientId = orBack(await password({ message: "Reddit client id" }));
+  account.clientSecret = orBack(await password({ message: "Reddit client secret" }));
 
-  const authMode = assertNotCancel(
+  const authMode = orBack(
     await select({
       message: "Reddit auth method",
       initialValue: "refresh",
@@ -383,16 +400,16 @@ async function configureReddit(socialAuth: UspConfig, project: UspConfig, accoun
   ) as "refresh" | "password";
 
   if (authMode === "refresh") {
-    account.refreshToken = assertNotCancel(await password({ message: "Reddit refresh token" }));
+    account.refreshToken = orBack(await password({ message: "Reddit refresh token" }));
     delete account.username;
     delete account.password;
   } else {
-    account.username = assertNotCancel(await text({ message: "Reddit username" }));
-    account.password = assertNotCancel(await password({ message: "Reddit password" }));
+    account.username = orBack(await text({ message: "Reddit username" }));
+    account.password = orBack(await password({ message: "Reddit password" }));
     delete account.refreshToken;
   }
 
-  account.userAgent = assertNotCancel(
+  account.userAgent = orBack(
     await text({
       message: "Reddit user agent",
       placeholder: "usp/0.1.0 by your_reddit_username",
@@ -413,8 +430,8 @@ async function configureTelegram(socialAuth: UspConfig, project: UspConfig, acco
   );
 
   const account = ensureAccount(socialAuth, "telegram", accountName);
-  account.botToken = assertNotCancel(await password({ message: "Telegram bot token" }));
-  account.chatId = assertNotCancel(
+  account.botToken = orBack(await password({ message: "Telegram bot token" }));
+  account.chatId = orBack(
     await text({
       message: "Default Telegram chat_id",
       placeholder: "@my_channel",
@@ -435,14 +452,14 @@ async function configureAegea(socialAuth: UspConfig, project: UspConfig, account
   );
 
   const account = ensureAccount(socialAuth, "aegea", accountName);
-  account.baseUrl = assertNotCancel(
+  account.baseUrl = orBack(
     await text({
       message: "Aegea base URL",
       placeholder: "http://localhost/",
       defaultValue: String(account.baseUrl ?? "http://localhost/"),
     })
   );
-  account.password = assertNotCancel(await password({ message: "Aegea author password" }));
+  account.password = orBack(await password({ message: "Aegea author password" }));
 }
 
 async function configureBluesky(socialAuth: UspConfig, project: UspConfig, accountName: string) {
@@ -457,15 +474,15 @@ async function configureBluesky(socialAuth: UspConfig, project: UspConfig, accou
   );
 
   const account = ensureAccount(socialAuth, "bluesky", accountName);
-  account.identifier = assertNotCancel(
+  account.identifier = orBack(
     await text({
       message: "Bluesky handle or email",
       placeholder: "you.bsky.social",
       defaultValue: typeof account.identifier === "string" ? account.identifier : undefined,
     })
   );
-  account.appPassword = assertNotCancel(await password({ message: "Bluesky app password" }));
-  account.pdsUrl = assertNotCancel(
+  account.appPassword = orBack(await password({ message: "Bluesky app password" }));
+  account.pdsUrl = orBack(
     await text({
       message: "Bluesky PDS URL",
       placeholder: "https://bsky.social",
@@ -486,15 +503,15 @@ async function configureMastodon(socialAuth: UspConfig, project: UspConfig, acco
   );
 
   const account = ensureAccount(socialAuth, "mastodon", accountName);
-  account.instanceUrl = assertNotCancel(
+  account.instanceUrl = orBack(
     await text({
       message: "Mastodon instance URL",
       placeholder: "https://mastodon.social",
       defaultValue: String(account.instanceUrl ?? "https://mastodon.social"),
     })
   );
-  account.accessToken = assertNotCancel(await password({ message: "Mastodon access token" }));
-  account.visibility = assertNotCancel(
+  account.accessToken = orBack(await password({ message: "Mastodon access token" }));
+  account.visibility = orBack(
     await select({
       message: "Mastodon visibility",
       initialValue: account.visibility ?? "public",
@@ -520,22 +537,22 @@ async function configureDiscord(socialAuth: UspConfig, project: UspConfig, accou
   );
 
   const account = ensureAccount(socialAuth, "discord", accountName);
-  account.webhookUrl = assertNotCancel(await password({ message: "Discord webhook URL" }));
-  account.threadId = assertNotCancel(
+  account.webhookUrl = orBack(await password({ message: "Discord webhook URL" }));
+  account.threadId = orBack(
     await text({
       message: "Default Discord thread ID",
       placeholder: "Optional",
       defaultValue: typeof account.threadId === "string" ? account.threadId : "",
     })
   );
-  account.username = assertNotCancel(
+  account.username = orBack(
     await text({
       message: "Webhook display name",
       placeholder: "Ultimate Social Poster",
       defaultValue: typeof account.username === "string" ? account.username : "Ultimate Social Poster",
     })
   );
-  account.avatarUrl = assertNotCancel(
+  account.avatarUrl = orBack(
     await text({
       message: "Webhook avatar URL",
       placeholder: "Optional",
@@ -556,15 +573,15 @@ async function configureThreads(socialAuth: UspConfig, project: UspConfig, accou
   );
 
   const account = ensureAccount(socialAuth, "threads", accountName);
-  account.accessToken = assertNotCancel(await password({ message: "Threads access token" }));
-  account.userId = assertNotCancel(
+  account.accessToken = orBack(await password({ message: "Threads access token" }));
+  account.userId = orBack(
     await text({
       message: "Threads user id",
       placeholder: "me",
       defaultValue: typeof account.userId === "string" ? account.userId : "me",
     })
   );
-  account.replyControl = assertNotCancel(
+  account.replyControl = orBack(
     await select({
       message: "Who can reply",
       initialValue: account.replyControl ?? "everyone",
@@ -721,7 +738,7 @@ async function configurePlatformAccount(
     account.username = derived;
   }
   const finalName = safeSegment(
-    assertNotCancel(
+    orBack(
       await text({
         message: "Account name",
         defaultValue: derived,
@@ -734,76 +751,119 @@ async function configurePlatformAccount(
   note(`${platform}.${finalName} saved.`, "Saved");
 }
 
-async function configureSocialPlatform(platform: Platform, socialAuth: UspConfig, project: UspConfig, projectPath: string) {
+async function configureTargets(socialAuth: UspConfig, project: UspConfig, projectPath: string) {
   for (;;) {
-    const accounts = Object.keys(accountsFor(socialAuth, platform));
-    const choice = assertNotCancel(
-      await select({
-        message: `${platform} accounts`,
-        options: [
-          ...accounts.map((name) => ({ value: `edit:${name}`, label: name, hint: "Configure or delete" })),
-          { value: "add", label: "Add account" },
-          { value: "back", label: "Back" },
-        ],
-      })
-    ) as string;
+    const targets = Object.entries(project.targets ?? {});
+    let choice: string;
+    try {
+      choice = orBack(
+        await select({
+          message: "Targets",
+          options: [
+            ...targets.map(([id, target]) => ({
+              value: `edit:${id}`,
+              label: `${PLATFORM_INFO[target.platform].label} ${pc.dim(`(${id})`)}`,
+              hint: `${target.account}, ${targetStatusHint(socialAuth, target)}`,
+            })),
+            { value: "add", label: "Add target" },
+            { value: "back", label: "Back" },
+          ],
+        })
+      ) as string;
+    } catch (error) {
+      if (error instanceof SetupBack) return;
+      throw error;
+    }
 
     if (choice === "back") {
       return;
     }
 
-    if (choice === "add") {
-      await configurePlatformAccount(platform, socialAuth, project, `__new_${Date.now()}`);
-      await writePlatformSocialAuth(platform, socialAuth);
-      await writeConfigFile(projectPath, project);
-      continue;
-    }
+    // Cancelling any prompt inside an add/edit/delete action drops back to this list, not out of setup.
+    try {
+      if (choice === "add") {
+        const platform = orBack(
+          await select({
+            message: "Platform for the new target",
+            options: [
+              ...SOCIAL_PLATFORMS.map((item) => ({
+                value: item,
+                label: PLATFORM_INFO[item].label,
+                hint: PLATFORM_INFO[item].hint,
+              })),
+              { value: "back", label: "Back" },
+            ],
+          })
+        ) as Platform | "back";
 
-    const accountName = choice.slice("edit:".length);
-    const action = assertNotCancel(
-      await select({
-        message: `${platform}.${accountName}`,
-        options: [
-          { value: "configure", label: "Configure" },
-          { value: "delete", label: "Delete" },
-          { value: "back", label: "Back" },
-        ],
-      })
-    ) as "configure" | "delete" | "back";
+        if (platform === "back") {
+          continue;
+        }
+        await configurePlatformAccount(platform, socialAuth, project, `__new_${Date.now()}`);
+        await writePlatformSocialAuth(platform, socialAuth);
+        await writeConfigFile(projectPath, project);
+        continue;
+      }
 
-    if (action === "back") {
-      continue;
-    }
-    if (action === "delete") {
-      deleteAccount(project, socialAuth, platform, accountName);
-      await writePlatformSocialAuth(platform, socialAuth);
+      const id = choice.slice("edit:".length);
+      const target = project.targets?.[id];
+      if (!target) {
+        continue;
+      }
+
+      const action = orBack(
+        await select({
+          message: `${id} (${target.platform}/${target.account})`,
+          options: [
+            { value: "configure", label: "Edit credentials" },
+            { value: "delete", label: "Delete" },
+            { value: "back", label: "Back" },
+          ],
+        })
+      ) as "configure" | "delete" | "back";
+
+      if (action === "back") {
+        continue;
+      }
+      if (action === "delete") {
+        deleteAccount(project, socialAuth, target.platform, target.account);
+        await writePlatformSocialAuth(target.platform, socialAuth);
+        await writeConfigFile(projectPath, project);
+        note(`${id} deleted.`, "Deleted");
+        continue;
+      }
+      await configurePlatformAccount(target.platform, socialAuth, project, target.account);
+      await writePlatformSocialAuth(target.platform, socialAuth);
       await writeConfigFile(projectPath, project);
-      note(`${platform}.${accountName} deleted.`, "Deleted");
-      continue;
+    } catch (error) {
+      if (error instanceof SetupBack) continue;
+      throw error;
     }
-    await configurePlatformAccount(platform, socialAuth, project, accountName);
-    await writePlatformSocialAuth(platform, socialAuth);
-    await writeConfigFile(projectPath, project);
   }
 }
 
 async function configurePrompts(project: UspConfig) {
-  const platform = assertNotCancel(
+  const platform = orBack(
     await select({
       message: "Prompt platform",
-      options: SOCIAL_PLATFORMS.map((item) => ({ value: item, label: item })),
+      options: SOCIAL_PLATFORMS.map((item) => ({ value: item, label: PLATFORM_INFO[item].label })),
     })
   ) as Platform;
 
-  const current = project.prompts?.[platform] ?? DEFAULT_PLATFORM_PROMPTS[platform];
-  note(current, `${platform} current prompt`);
-  const action = assertNotCancel(
+  // The shared layer-1 guidance is intentionally hidden; the UI only shows the per-platform rules.
+  note(DEFAULT_PLATFORM_PROMPTS[platform], `${PLATFORM_INFO[platform].label} rules`);
+  const existing = project.prompts?.[platform];
+  if (existing) {
+    note(existing.text, `Your override (${existing.mode})`);
+  }
+
+  const action = orBack(
     await select({
-      message: "Change prompt",
+      message: "Customize prompt",
       options: [
-        { value: "append", label: "Append" },
-        { value: "replace", label: "Replace" },
-        { value: "revert", label: "Revert to original" },
+        { value: "append", label: "Append", hint: "Add your text after the rules" },
+        { value: "replace", label: "Replace", hint: "Use only your text" },
+        { value: "revert", label: "Revert to default", hint: "Remove your override" },
         { value: "back", label: "Back" },
       ],
     })
@@ -815,65 +875,43 @@ async function configurePrompts(project: UspConfig) {
   project.prompts ??= {};
   if (action === "revert") {
     delete project.prompts[platform];
-    note("Default prompt restored.", "Saved");
+    note("Reverted to default rules.", "Saved");
     return;
   }
-  const value = assertNotCancel(
+  const value = orBack(
     await text({
-      message: action === "append" ? "Prompt text to append" : "Replacement prompt",
-      placeholder: "Return JSON only...",
+      message: action === "append" ? "Text to append" : "Replacement prompt",
+      defaultValue: existing?.mode === action ? existing.text : undefined,
+      placeholder: action === "append" ? "Use a dry, factual tone." : "Write a single punchy paragraph...",
     })
   );
-  project.prompts[platform] = action === "append" ? [current, "", value].join("\n") : value;
+  project.prompts[platform] = { mode: action, text: value };
   note("Prompt saved.", "Saved");
 }
 
 async function configurePostingDefaults(project: UspConfig) {
-  const targetIds = Object.keys(project.targets ?? {});
-  if (targetIds.length === 0) {
-    note("No targets configured yet. Add social accounts first.", "Default posting");
+  const targets = Object.entries(project.targets ?? {});
+  if (targets.length === 0) {
+    note("No targets configured yet. Add a target first.", "Default posting");
     return;
   }
 
   const global = await loadGlobalConfig();
-  global.postingDefaults ??= {};
+  const rows: PostTargetRow[] = targets.map(([id, target]) => ({
+    id,
+    platform: target.platform,
+    account: target.account,
+    mode: global.postingDefaults?.[id] ?? "off",
+  }));
 
-  for (;;) {
-    const choice = assertNotCancel(
-      await select({
-        message: "Default posting state per target",
-        options: [
-          ...targetIds.map((id) => ({
-            value: id,
-            label: id,
-            hint: global.postingDefaults?.[id] ?? "unset",
-          })),
-          { value: "__back", label: "Back" },
-        ],
-      })
-    ) as string;
-
-    if (choice === "__back") {
-      return;
-    }
-
-    const current = (global.postingDefaults?.[choice] ?? "off") as PostMode;
-    const mode = assertNotCancel(
-      await select({
-        message: `Default for ${choice}`,
-        initialValue: current,
-        options: [
-          { value: "off", label: "Off", hint: "Not pre-selected in the publish picker" },
-          { value: "as-is", label: "As-is", hint: "Post raw text, no LLM processing" },
-          { value: "llm", label: "LLM", hint: "Process with the LLM" },
-        ],
-      })
-    ) as PostMode;
-
-    global.postingDefaults![choice] = mode;
-    await writeGlobalConfig(global);
-    note(`${choice} default set to ${mode}.`, "Saved");
+  const selection = await pickPostTargets(rows, { message: "Default posting per target" });
+  if (selection === null) {
+    return;
   }
+
+  global.postingDefaults = Object.fromEntries(selection.map((row) => [row.id, row.mode]));
+  await writeGlobalConfig(global);
+  note("Default posting saved.", "Saved");
 }
 
 async function runInteractiveSetup() {
@@ -888,18 +926,28 @@ async function runInteractiveSetup() {
   const project = loadedProject.config;
 
   for (;;) {
-    const section = assertNotCancel(
-      await select({
-        message: "Setup menu",
-        options: [
-          { value: "llm", label: "LLM provider", hint: llmStatus(project, socialAuth) },
-          { value: "social", label: "Social auth", hint: socialSummary(project, socialAuth) },
-          { value: "prompts", label: "Prompts", hint: "Customize platform prompts" },
-          { value: "posting", label: "Default posting", hint: "Per-target defaults for the publish picker" },
-          { value: "exit", label: "Exit" },
-        ],
-      })
-    ) as "llm" | "social" | "prompts" | "posting" | "exit";
+    let section: "llm" | "targets" | "prompts" | "posting" | "exit";
+    try {
+      section = orBack(
+        await select({
+          message: "Setup menu",
+          options: [
+            { value: "targets", label: "Targets", hint: targetsSummary(project, socialAuth) },
+            { value: "llm", label: "LLM provider", hint: llmStatus(project, socialAuth) },
+            { value: "prompts", label: "Prompts", hint: "customize per-platform LLM prompts" },
+            { value: "posting", label: "Default posting", hint: "per-target defaults for the publish picker" },
+            { value: "exit", label: "Exit" },
+          ],
+        })
+      ) as "llm" | "targets" | "prompts" | "posting" | "exit";
+    } catch (error) {
+      // Cancelling the top-level menu exits the wizard (saving first).
+      if (error instanceof SetupBack) {
+        section = "exit";
+      } else {
+        throw error;
+      }
+    }
 
     if (section === "exit") {
       await writeLlmAuth({ llm: socialAuth.llm });
@@ -908,48 +956,32 @@ async function runInteractiveSetup() {
       return;
     }
 
-    if (section === "llm") {
-      await configureLlm(project, socialAuth);
-      await writeLlmAuth({ llm: socialAuth.llm });
-      await writeConfigFile(loadedProject.path, project);
-      note("LLM settings saved. Pick another section or Exit.", "Saved");
-      continue;
+    // Cancelling anything inside a section drops back to this menu.
+    try {
+      if (section === "llm") {
+        await configureLlm(project, socialAuth);
+        await writeLlmAuth({ llm: socialAuth.llm });
+        await writeConfigFile(loadedProject.path, project);
+        note("LLM settings saved. Pick another section or Exit.", "Saved");
+        continue;
+      }
+
+      if (section === "prompts") {
+        await configurePrompts(project);
+        await writeConfigFile(loadedProject.path, project);
+        continue;
+      }
+
+      if (section === "posting") {
+        await configurePostingDefaults(project);
+        continue;
+      }
+
+      await configureTargets(socialAuth, project, loadedProject.path);
+    } catch (error) {
+      if (error instanceof SetupBack) continue;
+      throw error;
     }
-
-    if (section === "prompts") {
-      await configurePrompts(project);
-      await writeConfigFile(loadedProject.path, project);
-      continue;
-    }
-
-    if (section === "posting") {
-      await configurePostingDefaults(project);
-      continue;
-    }
-
-    const platform = assertNotCancel(
-      await select({
-        message: "Social auth",
-        options: [
-          { value: "x", label: "X", hint: `API posting with media, ${statusHint(platformStatus(project, socialAuth, "x"))}` },
-          { value: "linkedin", label: "LinkedIn", hint: `Personal profile posts, ${statusHint(platformStatus(project, socialAuth, "linkedin"))}` },
-          { value: "reddit", label: "Reddit", hint: `One subreddit target, ${statusHint(platformStatus(project, socialAuth, "reddit"))}` },
-          { value: "telegram", label: "Telegram", hint: `Channel, group, or chat, ${statusHint(platformStatus(project, socialAuth, "telegram"))}` },
-          { value: "aegea", label: "Aegea", hint: `Blog post via password login, ${statusHint(platformStatus(project, socialAuth, "aegea"))}` },
-          { value: "bluesky", label: "Bluesky", hint: `API posts and threads, ${statusHint(platformStatus(project, socialAuth, "bluesky"))}` },
-          { value: "mastodon", label: "Mastodon", hint: `Instance API posts and threads, ${statusHint(platformStatus(project, socialAuth, "mastodon"))}` },
-          { value: "discord", label: "Discord", hint: `Incoming webhook, ${statusHint(platformStatus(project, socialAuth, "discord"))}` },
-          { value: "threads", label: "Threads", hint: `API posts and reply chains, ${statusHint(platformStatus(project, socialAuth, "threads"))}` },
-          { value: "back", label: "Back" },
-        ],
-      })
-    ) as Platform | "back";
-
-    if (platform === "back") {
-      continue;
-    }
-
-    await configureSocialPlatform(platform, socialAuth, project, loadedProject.path);
   }
 }
 

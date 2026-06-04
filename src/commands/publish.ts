@@ -1,5 +1,5 @@
-import { cancel, isCancel, select } from "@clack/prompts";
-import { loadConfig } from "../config/config.js";
+import { cancel, confirm, isCancel, select } from "@clack/prompts";
+import { loadConfig, loadGlobalConfig, writeGlobalConfig } from "../config/config.js";
 import { MarkdownFileInputSource, MarkdownTextInputSource, StdinMarkdownInputSource } from "../input/markdown-source.js";
 import { createLlmClient } from "../llm/client.js";
 import { JsonLlmProcessor } from "../llm/processor.js";
@@ -12,7 +12,7 @@ import type { PlatformPlan, PostMode, PublishTargetResult } from "../types.js";
 import { createNoopSpinner, createSpinner, platformName, printError, printPlatformText, printWarning } from "../util/display.js";
 import type { TargetRef } from "../pipeline/contracts.js";
 import { pickPostTargets, type PostTargetRow } from "./post-picker.js";
-import { filterReadyTargets, listReadyTargets, resolveInitialPostMode, resolveTargets } from "./targets.js";
+import { filterReadyTargets, resolveInitialPostMode, resolveTargets } from "./targets.js";
 
 function printHumanResults(results: PublishTargetResult[]) {
   for (const result of results) {
@@ -162,22 +162,34 @@ type PublishOptions = {
   stdin?: boolean;
 };
 
+async function savePostingDefaults(rows: PostTargetRow[]) {
+  const global = await loadGlobalConfig();
+  global.postingDefaults = Object.fromEntries(rows.map((row) => [row.id, row.mode]));
+  await writeGlobalConfig(global);
+}
+
 async function resolvePublishTargets(
   config: Awaited<ReturnType<typeof loadConfig>>,
-  options: PublishOptions
+  options: PublishOptions,
+  mode: "publish" | "preview"
 ): Promise<TargetRef[]> {
   const interactive = !options.target?.length && !options.stdin && Boolean(process.stdout.isTTY);
 
   if (interactive) {
-    const ready = listReadyTargets(config);
-    if (ready.length === 0) {
-      throw new Error("No configured targets to publish to. Run `usp setup`.");
+    const allTargets = Object.entries(config.targets ?? {}).map(([id, targetConfig]) => ({ id, config: targetConfig }));
+    if (allTargets.length === 0) {
+      throw new Error("No targets configured. Run `usp setup`.");
     }
+    const { ready } = filterReadyTargets(config, allTargets);
+    if (ready.length === 0) {
+      throw new Error("No configured targets are ready to publish to. Run `usp setup`.");
+    }
+    const hasSavedDefaults = Object.keys(config.postingDefaults ?? {}).length > 0;
     const rows: PostTargetRow[] = ready.map((target) => ({
       id: target.id,
       platform: target.config.platform,
       account: target.config.account,
-      mode: resolveInitialPostMode(config, target.id, options.profile),
+      mode: resolveInitialPostMode(config, target.id),
     }));
     const selection = await pickPostTargets(rows);
     if (selection === null) {
@@ -188,6 +200,14 @@ async function resolvePublishTargets(
     if (chosen.length === 0) {
       throw new Error("No targets selected.");
     }
+
+    if (mode === "publish" && !hasSavedDefaults) {
+      const save = await confirm({ message: "Set this target configuration as default?", initialValue: false });
+      if (!isCancel(save) && save) {
+        await savePostingDefaults(selection);
+      }
+    }
+
     const configById = new Map(ready.map((target) => [target.id, target.config]));
     return chosen.map((row) => ({ id: row.id, config: configById.get(row.id)!, postMode: row.mode }));
   }
@@ -211,7 +231,7 @@ async function runPublishFlow(
   mode: "publish" | "preview"
 ) {
   const config = await loadConfig({ configPath: options.config, overrides: options.set });
-  const locallyReady = await resolvePublishTargets(config, options);
+  const locallyReady = await resolvePublishTargets(config, options, mode);
   const pipeline = createPipeline(file, options, config);
   const previewStore = new PreviewStore();
   const { plan, results } = await pipeline.publish({

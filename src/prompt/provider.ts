@@ -1,5 +1,5 @@
-import type { Platform } from "../types.js";
-import { buildPrompt, DEFAULT_PLATFORM_PROMPTS } from "../llm/prompts.js";
+import type { Platform, PromptLayer } from "../types.js";
+import { buildPrompt } from "../llm/prompts.js";
 import { PromptProvider, type PromptRequest } from "../pipeline/contracts.js";
 
 export type PromptOverrideMode = "replace" | "append";
@@ -43,20 +43,23 @@ export class ConfigPromptProvider extends PromptProvider {
 
   build(request: PromptRequest): string {
     const platform = request.platform;
-    const configuredPrompt = request.target.prompt ?? request.config.prompts?.[platform];
-    const basePrompt = configuredPrompt || DEFAULT_PLATFORM_PROMPTS[platform];
-    const override = this.overrides.get(platform);
-    const customPrompt = override
-      ? override.mode === "append"
-        ? [basePrompt, "", override.text].join("\n")
-        : override.text
-      : configuredPrompt;
-
     return buildPrompt({
       input: request.input,
       platform,
       target: request.target,
-      customPrompt,
+      override: this.resolveOverride(request),
     });
+  }
+
+  // Layer 3 precedence: CLI --prompt > per-target prompt > configured prompt.
+  private resolveOverride(request: PromptRequest): PromptLayer | undefined {
+    const cli = this.overrides.get(request.platform);
+    if (cli) {
+      return { mode: cli.mode, text: cli.text };
+    }
+    if (request.target.prompt) {
+      return { mode: "replace", text: request.target.prompt };
+    }
+    return request.config.prompts?.[request.platform];
   }
 }

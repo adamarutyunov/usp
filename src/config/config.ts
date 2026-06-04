@@ -3,10 +3,24 @@ import os from "node:os";
 import path from "node:path";
 
 import YAML from "yaml";
-import type { JsonObject, UspConfig } from "../types.js";
+import type { JsonObject, LlmProvider, Platform, UspConfig } from "../types.js";
 import { deepMerge, setDeepValue } from "../util/object.js";
 
 export const DEFAULT_CONFIG_NAMES = ["usp.config.yml", ".usp.yml"];
+
+// Account fields that can be supplied via environment variables, by convention
+// `${PLATFORM}_${FIELD}` (e.g. X_CONSUMER_KEY, DISCORD_WEBHOOK_URL, TELEGRAM_BOT_TOKEN).
+const ACCOUNT_ENV_FIELDS: Record<Platform, string[]> = {
+  x: ["consumerKey", "consumerSecret", "accessToken", "accessTokenSecret"],
+  linkedin: ["accessToken", "author", "version"],
+  reddit: ["clientId", "clientSecret", "refreshToken", "username", "password", "subreddit", "userAgent"],
+  telegram: ["botToken", "chatId"],
+  aegea: ["baseUrl", "password"],
+  bluesky: ["identifier", "appPassword", "pdsUrl"],
+  mastodon: ["instanceUrl", "accessToken", "visibility"],
+  discord: ["webhookUrl", "threadId", "username", "avatarUrl"],
+  threads: ["accessToken", "userId", "username", "replyControl"],
+};
 
 export function getGlobalConfigPath() {
   return path.join(os.homedir(), ".config", "usp", "config.yml");
@@ -18,6 +32,60 @@ export function getSocialAuthDir() {
 
 export function getBrowserAuthDir() {
   return path.join(os.homedir(), ".config", "usp", "browser-auth");
+}
+
+function isBlank(value: unknown) {
+  return value === undefined || value === null || (typeof value === "string" && value.trim() === "");
+}
+
+function envName(platform: string, field: string) {
+  const snake = field.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
+  return `${platform.toUpperCase()}_${snake}`;
+}
+
+/**
+ * Fill credentials from environment variables when the config leaves them blank.
+ * Accounts use the convention `${PLATFORM}_${FIELD}` (e.g. X_CONSUMER_KEY); the LLM
+ * key uses `${PROVIDER}_API_KEY` / `${PROVIDER}_AUTH_TOKEN`. Existing config values
+ * always win — env is only a fallback, which is what makes CI secrets "just work".
+ */
+export function applyEnvFallbacks(config: UspConfig): UspConfig {
+  config.accounts ??= {};
+  const accounts = config.accounts as Record<string, Record<string, Record<string, unknown>>>;
+
+  // Ensure every target's account object exists so env can populate it even with no accounts block.
+  for (const target of Object.values(config.targets ?? {})) {
+    accounts[target.platform] ??= {};
+    accounts[target.platform]![target.account] ??= {};
+  }
+
+  for (const [platform, platformAccounts] of Object.entries(accounts)) {
+    const fields = ACCOUNT_ENV_FIELDS[platform as Platform];
+    if (!fields) {
+      continue;
+    }
+    for (const account of Object.values(platformAccounts ?? {})) {
+      for (const field of fields) {
+        const fromEnv = process.env[envName(platform, field)];
+        if (isBlank(account[field]) && fromEnv) {
+          account[field] = fromEnv;
+        }
+      }
+    }
+  }
+
+  const provider = config.llm?.provider as LlmProvider | undefined;
+  if (provider) {
+    const prefix = provider.toUpperCase();
+    if (isBlank(config.llm!.apiKey)) {
+      config.llm!.apiKey = process.env[`${prefix}_API_KEY`] ?? config.llm!.apiKey;
+    }
+    if (isBlank(config.llm!.authToken)) {
+      config.llm!.authToken = process.env[`${prefix}_AUTH_TOKEN`] ?? config.llm!.authToken;
+    }
+  }
+
+  return config;
 }
 
 async function readYamlIfExists(filePath: string): Promise<JsonObject> {
@@ -89,7 +157,7 @@ export async function loadConfig(options: {
     setDeepValue(merged, key, rest.join("="));
   }
 
-  return merged as UspConfig;
+  return applyEnvFallbacks(merged as UspConfig);
 }
 
 export async function loadGlobalConfig(): Promise<UspConfig> {

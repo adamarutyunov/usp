@@ -139,20 +139,8 @@ export function resolveTargets(config: UspConfig, options: { profile?: string; t
   });
 }
 
-export function listReadyTargets(config: UspConfig) {
-  const allTargets = config.targets ?? {};
-  return Object.entries(allTargets)
-    .filter(([, target]) => getTargetReadiness(config, target as TargetConfig).ready)
-    .map(([id, target]) => ({ id, config: target as TargetConfig }));
-}
-
-export function resolveInitialPostMode(config: UspConfig, id: string, profileName = "default"): PostMode {
-  const explicit = config.postingDefaults?.[id];
-  if (explicit) {
-    return explicit;
-  }
-  const profileTargets = config.profiles?.[profileName]?.targets ?? [];
-  return profileTargets.includes(id) ? "llm" : "off";
+export function resolveInitialPostMode(config: UspConfig, id: string): PostMode {
+  return config.postingDefaults?.[id] ?? "off";
 }
 
 export function filterReadyTargets(

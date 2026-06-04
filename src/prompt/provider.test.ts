@@ -49,7 +49,7 @@ describe("prompt provider", () => {
     });
   });
 
-  it("appends CLI prompt text to the default prompt", () => {
+  it("appends CLI prompt text after the base and platform layers", () => {
     const provider = new ConfigPromptProvider([parsePromptOverride("x:append:Use a dry tone.")]);
     const prompt = provider.build({
       input,
@@ -58,7 +58,39 @@ describe("prompt provider", () => {
       config: {},
     });
 
-    expect(prompt).toContain("Platform: X.");
+    // Layer 1 (base), layer 2 (platform rules), and layer 3 (override) are all present.
+    expect(prompt).toContain("ready to post on social media");
+    expect(prompt).toContain("at most 280 characters");
     expect(prompt).toContain("Use a dry tone.");
+    // Output contract is always present.
+    expect(prompt).toContain("Return only valid JSON");
+  });
+
+  it("replace drops the base and platform layers but keeps the output contract", () => {
+    const provider = new ConfigPromptProvider([parsePromptOverride("x:replace:Only my words.")]);
+    const prompt = provider.build({
+      input,
+      platform: "x",
+      target: { platform: "x", account: "main" },
+      config: {},
+    });
+
+    expect(prompt).toContain("Only my words.");
+    expect(prompt).not.toContain("at most 280 characters");
+    expect(prompt).not.toContain("ready to post on social media");
+    expect(prompt).toContain("Return only valid JSON");
+  });
+
+  it("uses a configured layer-3 override when no CLI override is given", () => {
+    const provider = new ConfigPromptProvider();
+    const prompt = provider.build({
+      input,
+      platform: "x",
+      target: { platform: "x", account: "main" },
+      config: { prompts: { x: { mode: "replace", text: "Configured only." } } },
+    });
+
+    expect(prompt).toContain("Configured only.");
+    expect(prompt).not.toContain("at most 280 characters");
   });
 });

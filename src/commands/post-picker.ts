@@ -21,24 +21,32 @@ function nextMode(mode: PostMode, direction: 1 | -1): PostMode {
   return CYCLE[(index + direction + length) % length]!;
 }
 
+// Matches squirrel's colorLightBlue (#7dd3fc / sky-300) via a 24-bit truecolor escape.
+function lightBlue(text: string) {
+  return `\x1b[38;2;125;211;252m${text}\x1b[39m`;
+}
+
 function modeIcon(mode: PostMode) {
-  if (mode === "llm") return pc.green("●");
-  if (mode === "as-is") return pc.yellow("◐");
-  return pc.dim("○");
+  if (mode === "llm") return lightBlue("●");
+  if (mode === "as-is") return pc.yellow("●");
+  return pc.dim("●");
 }
 
 function modeLabel(mode: PostMode) {
-  if (mode === "llm") return pc.green("LLM");
+  if (mode === "llm") return lightBlue("LLM");
   if (mode === "as-is") return pc.yellow("as-is");
   return pc.dim("off");
 }
+
+type PickOptions = { input?: Readable; output?: Writable; message?: string };
 
 class PostTargetPrompt extends Prompt<PostTargetRow[]> {
   readonly rows: PostTargetRow[];
   private index = 0;
   private readonly labelWidth: number;
+  private readonly message: string;
 
-  constructor(rows: PostTargetRow[], io: { input?: Readable; output?: Writable } = {}) {
+  constructor(rows: PostTargetRow[], io: PickOptions = {}) {
     super(
       {
         input: io.input,
@@ -49,6 +57,8 @@ class PostTargetPrompt extends Prompt<PostTargetRow[]> {
       },
       false
     );
+
+    this.message = io.message ?? "Select targets to post";
 
     this.rows = rows.map((row) => ({ ...row }));
     this.value = this.rows;
@@ -91,7 +101,7 @@ class PostTargetPrompt extends Prompt<PostTargetRow[]> {
     }
 
     const lines = [
-      `${pc.cyan("◆")}  Select targets to post`,
+      `${pc.cyan("◆")}  ${this.message}`,
       `${bar}  ${pc.dim("↑/↓ move · space cycles off → as-is → LLM · enter confirm")}`,
     ];
     for (const [rowIndex, row] of this.rows.entries()) {
@@ -109,7 +119,7 @@ class PostTargetPrompt extends Prompt<PostTargetRow[]> {
 /** Returns the chosen rows, or `null` if the user cancelled (Ctrl+C / Escape). */
 export async function pickPostTargets(
   rows: PostTargetRow[],
-  io: { input?: Readable; output?: Writable } = {}
+  io: PickOptions = {}
 ): Promise<PostTargetRow[] | null> {
   const result = await new PostTargetPrompt(rows, io).prompt();
   if (isCancel(result)) {

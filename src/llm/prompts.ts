@@ -1,95 +1,89 @@
-import type { MarkdownInput, Platform, TargetConfig } from "../types.js";
+import type { MarkdownInput, Platform, PromptLayer, TargetConfig } from "../types.js";
 
-const SHARED_RULES = [
-  "You convert Markdown into a platform-native social posting plan.",
-  "Return only valid JSON. No Markdown fences. No commentary.",
-  "The output schema is: {\"title\":\"optional title\",\"units\":[{\"text\":\"post text\",\"mediaRefs\":[\"img1\"]}]}",
-  "Use only mediaRefs that appear in the source. Preserve the intended ordering of images by attaching each image to the exact unit where it belongs.",
-  "Do not invent facts. Do not mention that the content came from Markdown.",
-  "Keep the voice concrete, useful, and non-hypey.",
-  "No emojis unless present in the source.",
-];
+// Layer 1 — the task and the quality bar. Always applied, never shown in the UI.
+const BASE_GUIDANCE = [
+  "Turn the source into copy that is ready to post on social media.",
+  "Stay faithful to it: no invented facts, no hype, no emojis unless the source already uses them.",
+  "Be concrete and useful. Never mention that the source was Markdown.",
+].join("\n");
 
+// Output contract — structural, machine-facing. Always enforced, even when an override replaces the guidance.
+const OUTPUT_CONTRACT = [
+  'Return only valid JSON: {"title":"optional title","units":[{"text":"post text","mediaRefs":["img1"]}]}',
+  "No code fences, no commentary.",
+  "Use only media ids from the catalog, attach each to the unit it belongs to, and keep their order.",
+].join("\n");
+
+// Layer 2 — per-platform rules. This is what the setup UI shows and edits.
 export const DEFAULT_PLATFORM_PROMPTS: Record<Platform, string> = {
   x: [
-    ...SHARED_RULES,
-    "Platform: X.",
-    "Create one tweet or a concise thread. Each unit must be at most 280 characters.",
-    "Attach images to the specific tweet they support, not automatically to the first or last tweet.",
-    "Avoid hashtags unless they are clearly useful or already present.",
+    "X: one tweet or a tight thread, at most 280 characters per unit.",
+    "Attach each image to the tweet it supports. Hashtags only when already present or clearly useful.",
   ].join("\n"),
   linkedin: [
-    ...SHARED_RULES,
-    "Platform: LinkedIn personal profile.",
-    "Create a professional post that can stand alone in a feed.",
-    "Prefer one unit unless image ordering or length makes multiple units necessary.",
-    "Keep it clear and specific; avoid corporate filler.",
+    "LinkedIn personal post: clear and specific, no corporate filler.",
+    "One unit unless length or image order needs more.",
   ].join("\n"),
   reddit: [
-    ...SHARED_RULES,
-    "Platform: Reddit.",
-    "Create a subreddit-appropriate title and one self-post body.",
-    "The title must be no more than 300 characters.",
-    "Avoid marketing language. Make the post useful for discussion.",
-    "For mediaRefs, include only images that are important context for the post.",
+    "Reddit self-post: a discussion-worthy title (at most 300 characters) and one body.",
+    "No marketing. Attach only images that add real context.",
   ].join("\n"),
   telegram: [
-    ...SHARED_RULES,
-    "Platform: Telegram channel or chat.",
-    "Create direct channel copy. Multiple units are allowed when images should be sent as separate messages.",
-    "Each unit must be at most 4096 characters.",
-    "Keep links and concrete details intact.",
+    "Telegram channel: direct copy, at most 4096 characters per unit.",
+    "Split into units when images should send as separate messages. Keep links intact.",
   ].join("\n"),
   aegea: [
-    ...SHARED_RULES,
-    "Platform: Aegea blog.",
-    "Create a blog post title and body units.",
-    "Preserve the source structure and image positions: make a new unit whenever an image should appear after that text.",
-    "Attach each image to the unit after which it should be rendered in the Aegea post body.",
-    "Do not shorten the post unless the source is repetitive.",
+    "Aegea blog: a title and body units.",
+    "Start a new unit wherever an image should appear, and attach that image to the unit it follows.",
+    "Do not shorten unless the source repeats itself.",
   ].join("\n"),
   bluesky: [
-    ...SHARED_RULES,
-    "Platform: Bluesky.",
-    "Create one post or a concise thread. Each unit must be at most 300 characters.",
-    "Attach images to the specific post they support, preserving source order.",
-    "Avoid hashtags unless they are clearly useful or already present.",
+    "Bluesky: one post or a tight thread, at most 300 characters per unit.",
+    "Attach each image to the post it supports, in order. Hashtags only when already present or clearly useful.",
   ].join("\n"),
   mastodon: [
-    ...SHARED_RULES,
-    "Platform: Mastodon.",
-    "Create one status or a concise reply thread. Each unit should be at most 500 characters unless the source needs more.",
-    "Attach images to the specific status they support, preserving source order.",
-    "Keep it plain, useful, and portable across Mastodon instances.",
+    "Mastodon: one status or a short reply thread, at most 500 characters per unit unless the source needs more.",
+    "Attach each image to the status it supports, in order. Keep it plain and instance-portable.",
   ].join("\n"),
   discord: [
-    ...SHARED_RULES,
-    "Platform: Discord channel.",
-    "Create direct channel copy. Multiple units are allowed when images should be sent as separate messages.",
-    "Each unit must be at most 2000 characters.",
-    "Preserve links, code snippets, and concrete details.",
+    "Discord channel: direct copy, at most 2000 characters per unit.",
+    "Split into units when images should send as separate messages. Keep links and code intact.",
   ].join("\n"),
   threads: [
-    ...SHARED_RULES,
-    "Platform: Threads.",
-    "Create one post or a concise reply chain. Each unit must be at most 500 characters.",
-    "Attach remote images or videos to the specific post they support. Do not attach local-only media.",
-    "Avoid hashtags unless they are clearly useful or already present.",
+    "Threads: one post or a short reply chain, at most 500 characters per unit.",
+    "Attach remote images or videos to the post they support; never local-only media. Hashtags only when present or clearly useful.",
   ].join("\n"),
 };
+
+/**
+ * Compose the guidance the model sees, per the override mode:
+ * - none/append: layer 1 + layer 2 (+ layer 3 when appending)
+ * - replace: layer 3 only
+ * The output contract is added separately and always applies.
+ */
+export function composeGuidance(platform: Platform, override?: PromptLayer) {
+  const text = override?.text?.trim();
+  if (text && override?.mode === "replace") {
+    return text;
+  }
+  const layers = [BASE_GUIDANCE, DEFAULT_PLATFORM_PROMPTS[platform]];
+  if (text) {
+    layers.push(text);
+  }
+  return layers.join("\n\n");
+}
 
 export function buildPrompt({
   input,
   platform,
   target,
-  customPrompt,
+  override,
 }: {
   input: MarkdownInput;
   platform: Platform;
   target: TargetConfig;
-  customPrompt?: string;
+  override?: PromptLayer;
 }) {
-  const prompt = customPrompt || DEFAULT_PLATFORM_PROMPTS[platform];
   const mediaCatalog =
     input.media.length === 0
       ? "No images."
@@ -98,7 +92,9 @@ export function buildPrompt({
           .join("\n");
 
   return [
-    prompt,
+    composeGuidance(platform, override),
+    "",
+    OUTPUT_CONTRACT,
     "",
     "Target context:",
     JSON.stringify(
