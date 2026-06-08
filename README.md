@@ -6,7 +6,6 @@
 
 - **One source, many platforms** — images and threads preserved.
 - **With or without AI** — raw text, or LLM-tailored per platform.
-- **Pick as you go** — an interactive tree toggles each target off / as-is / LLM before publishing.
 - **Preview** the generated text for every platform before anything goes live.
 - **Scriptable** — terminal, pipe, or GitHub Action.
 

@@ -59,8 +59,8 @@ describe("prompt provider", () => {
     });
 
     // Layer 1 (base), layer 2 (platform rules), and layer 3 (override) are all present.
-    expect(prompt).toContain("ready to post on social media");
-    expect(prompt).toContain("at most 280 characters");
+    expect(prompt).toContain("tailor a post for a specific social media platform");
+    expect(prompt).toContain("280 characters");
     expect(prompt).toContain("Use a dry tone.");
     // Output contract is always present.
     expect(prompt).toContain("Return only valid JSON");
@@ -76,8 +76,8 @@ describe("prompt provider", () => {
     });
 
     expect(prompt).toContain("Only my words.");
-    expect(prompt).not.toContain("at most 280 characters");
-    expect(prompt).not.toContain("ready to post on social media");
+    expect(prompt).not.toContain("280 characters");
+    expect(prompt).not.toContain("tailor a post for a specific social media platform");
     expect(prompt).toContain("Return only valid JSON");
   });
 
@@ -89,8 +89,9 @@ describe("prompt provider", () => {
       target: { platform: "x", account: "main" },
       config: { globalPrompt: "Always write in British English." },
     });
+    expect(prompt).toContain("# Custom Global Prompt");
     expect(prompt).toContain("Always write in British English.");
-    expect(prompt).toContain("at most 280 characters"); // platform rules still present
+    expect(prompt).toContain("280 characters"); // platform rules still present
   });
 
   it("drops the global prompt when a target replaces the guidance", () => {
@@ -115,6 +116,6 @@ describe("prompt provider", () => {
     });
 
     expect(prompt).toContain("Configured only.");
-    expect(prompt).not.toContain("at most 280 characters");
+    expect(prompt).not.toContain("280 characters");
   });
 });

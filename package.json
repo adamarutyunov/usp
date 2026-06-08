@@ -13,7 +13,7 @@
     "action.yml"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-prompts.mjs",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "check": "npm run build && npm test",
