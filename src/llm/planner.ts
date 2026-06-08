@@ -1,14 +1,4 @@
-import type {
-  MarkdownInput,
-  Platform,
-  PlatformPlan,
-  PublishPlan,
-  TargetConfig,
-  UspConfig,
-} from "../types.js";
-import { parseJsonObject } from "../util/json.js";
-import type { LlmClient } from "./client.js";
-import { buildPrompt } from "./prompts.js";
+import type { Platform, PlatformPlan } from "../types.js";
 
 const PLATFORM_TEXT_LIMITS: Partial<Record<Platform, number>> = {
   x: 280,
@@ -19,22 +9,63 @@ const PLATFORM_TEXT_LIMITS: Partial<Record<Platform, number>> = {
   threads: 500,
 };
 
-function splitText(text: string, limit: number) {
-  if (text.length <= limit) {
-    return [text];
+const ELLIPSIS = "...";
+
+/** Split text into grapheme clusters so we never cut a surrogate pair or combined emoji in half. */
+function toGraphemes(text: string): string[] {
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+    return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), (s) => s.segment);
+  }
+  return Array.from(text); // code-point fallback — still surrogate-safe
+}
+
+function isWhitespace(grapheme: string | undefined) {
+  return grapheme !== undefined && /\s/.test(grapheme);
+}
+
+/**
+ * Split text into chunks no longer than `limit` graphemes, breaking on whitespace
+ * where possible so words and URLs stay intact, and never cutting mid-grapheme.
+ * Non-final chunks reserve room for the trailing ellipsis so the result still fits.
+ */
+function splitText(text: string, limit: number): string[] {
+  const trimmed = text.trim();
+  const graphemes = toGraphemes(trimmed);
+  if (graphemes.length <= limit) {
+    return [trimmed];
   }
 
+  const windowSize = Math.max(1, limit - ELLIPSIS.length);
   const chunks: string[] = [];
-  let remaining = text.trim();
-  while (remaining.length > limit) {
-    const cut = remaining.lastIndexOf(" ", limit - 4);
-    const index = cut > limit * 0.6 ? cut : limit - 4;
-    chunks.push(`${remaining.slice(0, index).trim()}...`);
-    remaining = remaining.slice(index).trim();
+  let start = 0;
+
+  while (start < graphemes.length) {
+    if (graphemes.length - start <= limit) {
+      chunks.push(graphemes.slice(start).join("").trim());
+      break;
+    }
+
+    const hardEnd = start + windowSize;
+    // Prefer breaking at the last whitespace inside the window, unless that would
+    // make the chunk less than half-full (e.g. one very long word) — then hard-break.
+    let breakAt = hardEnd;
+    for (let index = hardEnd; index > start; index -= 1) {
+      if (isWhitespace(graphemes[index])) {
+        breakAt = index;
+        break;
+      }
+    }
+    if (breakAt <= start + Math.floor(windowSize / 2)) {
+      breakAt = hardEnd;
+    }
+
+    chunks.push(`${graphemes.slice(start, breakAt).join("").trim()}${ELLIPSIS}`);
+    start = breakAt;
+    while (start < graphemes.length && isWhitespace(graphemes[start])) {
+      start += 1;
+    }
   }
-  if (remaining) {
-    chunks.push(remaining);
-  }
+
   return chunks;
 }
 
@@ -68,67 +99,5 @@ export function normalizePlan(platform: Platform, raw: unknown, availableMedia: 
   return {
     title: typeof value.title === "string" ? value.title.trim().slice(0, 300) : undefined,
     units: limitedUnits,
-  };
-}
-
-export async function buildPlatformPlan({
-  input,
-  config,
-  target,
-  llm,
-}: {
-  input: MarkdownInput;
-  config: UspConfig;
-  target: { id: string; config: TargetConfig };
-  llm: LlmClient;
-}): Promise<PlatformPlan> {
-  const mediaIds = new Set(input.media.map((item) => item.id));
-  const platform = target.config.platform;
-  const prompt = buildPrompt({
-    input,
-    platform,
-    target: target.config,
-    globalAppend: config.globalPrompt,
-    platformOverride: config.prompts?.[platform],
-    targetOverride: target.config.prompt,
-  });
-  const response = await llm.generate(prompt);
-  return normalizePlan(platform, parseJsonObject(response), mediaIds);
-}
-
-export async function buildPublishPlan({
-  input,
-  config,
-  targets,
-  llm,
-}: {
-  input: MarkdownInput;
-  config: UspConfig;
-  targets: Array<{ id: string; config: TargetConfig }>;
-  llm: LlmClient;
-}): Promise<PublishPlan> {
-  const platforms: PublishPlan["platforms"] = {};
-
-  for (const target of targets) {
-    const platform = target.config.platform;
-    if (platforms[platform]) {
-      continue;
-    }
-
-    platforms[platform] = await buildPlatformPlan({
-      input,
-      config,
-      target,
-      llm,
-    });
-  }
-
-  return {
-    source: {
-      inputPath: input.inputPath,
-      title: input.title,
-    },
-    media: input.media.map(({ id, alt, rawPath, mime, size }) => ({ id, alt, rawPath, mime, size })),
-    platforms,
   };
 }

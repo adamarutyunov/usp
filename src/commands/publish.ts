@@ -9,7 +9,9 @@ import { AdapterPoster } from "../posting/poster.js";
 import { PreviewStore } from "../preview/store.js";
 import { ConfigPromptProvider, parsePromptOverride } from "../prompt/provider.js";
 import type { PlatformPlan, PostMode, PublishTargetResult } from "../types.js";
-import { createNoopSpinner, createSpinner, platformName, printError, printPlatformText, printWarning } from "../util/display.js";
+import pc from "yoctocolors";
+import { PartialPublishError } from "../adapters/common.js";
+import { platformName, printError, printPlatformText, printWarning } from "../util/display.js";
 import type { TargetRef } from "../pipeline/contracts.js";
 import { pickPostTargets, type PostTargetRow } from "./post-picker.js";
 import { filterReadyTargets, resolveInitialPostMode, resolveTargets } from "./targets.js";
@@ -76,45 +78,55 @@ function assertNotCancel<T>(value: T | symbol): T {
   return value;
 }
 
-function createHumanHooks() {
-  const makeSpinner = createSpinner;
-  let prepareSpinner: ReturnType<typeof makeSpinner> | undefined;
-  let postSpinner: ReturnType<typeof makeSpinner> | undefined;
+// Targets are processed concurrently, so progress is shown as discrete labeled
+// lines (each names its target) rather than a single shared spinner, which cannot
+// represent several in-flight operations at once.
+type HookTarget = { id: string; config: { platform: Parameters<typeof platformName>[0] } };
 
+function label(target: HookTarget) {
+  return `${platformName(target.config.platform)} (${target.id})`;
+}
+
+function createHumanHooks() {
   return {
     onPreviewDirectory(dir: string) {
       console.log(`Preview directory: ${dir}`);
     },
-    onPreviewReuse(target: { id: string }) {
-      prepareSpinner?.succeed(`Loaded preview for ${target.id}`);
+    onPreviewReuse(target: HookTarget) {
+      console.log(pc.dim(`Loaded preview for ${target.id}`));
     },
-    onPreviewWrite(target: { id: string }, filePath: string) {
-      console.log(`  saved ${target.id}: ${filePath}`);
+    onPreviewWrite(target: HookTarget, filePath: string) {
+      console.log(pc.dim(`  saved ${target.id}: ${filePath}`));
     },
-    onPrepareStart(target: { config: { platform: Parameters<typeof platformName>[0] } }) {
-      prepareSpinner = makeSpinner(`Preparing text for ${platformName(target.config.platform)}...`);
+    onPrepareStart(target: HookTarget) {
+      console.log(pc.dim(`Preparing text for ${label(target)}…`));
     },
-    onPrepareSuccess(target: { config: { platform: Parameters<typeof platformName>[0] } }, plan: PlatformPlan) {
-      const name = platformName(target.config.platform);
-      prepareSpinner?.succeed(`Prepared text for ${name}`);
+    onPrepareSuccess(target: HookTarget, plan: PlatformPlan) {
       printPlatformText(target.config.platform, plan);
     },
-    onPrepareError(target: { config: { platform: Parameters<typeof platformName>[0] } }, error: unknown) {
-      const name = platformName(target.config.platform);
-      prepareSpinner?.fail(`Error preparing text for ${name}`);
-      printError(`Error preparing text for ${name}: ${formatError(error)}`);
+    onPrepareError(target: HookTarget, error: unknown) {
+      printError(`Error preparing text for ${label(target)}: ${formatError(error)}`);
     },
-    onPostStart(target: { config: { platform: Parameters<typeof platformName>[0] } }) {
-      postSpinner = makeSpinner(`Posting to ${platformName(target.config.platform)}...`);
+    onPostStart(target: HookTarget) {
+      console.log(pc.dim(`Posting to ${label(target)}…`));
     },
-    onPostSuccess(target: { config: { platform: Parameters<typeof platformName>[0] } }, result: PublishTargetResult) {
-      postSpinner?.succeed(`Successfully posted to ${platformName(target.config.platform)}`);
+    onPostSuccess(target: HookTarget, result: PublishTargetResult) {
+      console.log(pc.green(`✓ Posted to ${label(target)}`));
       printPostSuccess(result);
     },
-    onPostError(target: { config: { platform: Parameters<typeof platformName>[0] } }, error: unknown) {
-      const name = platformName(target.config.platform);
-      postSpinner?.fail(`Error posting to ${name}`);
-      printError(`Error posting to ${name}: ${formatError(error)}`);
+    onPostError(target: HookTarget, error: unknown) {
+      printError(`Error posting to ${label(target)}: ${formatError(error)}`);
+      if (error instanceof PartialPublishError && error.posts.length > 0) {
+        printWarning(
+          `  ${error.posts.length} post(s) in this thread already went live before the failure — ` +
+            `re-running ${target.id} would duplicate them:`
+        );
+        for (const post of error.posts) {
+          if (post.url ?? post.id) {
+            console.warn(`    ${post.url ?? post.id}`);
+          }
+        }
+      }
     },
   };
 }
@@ -203,7 +215,11 @@ async function resolvePublishTargets(
 
     if (mode === "publish" && !hasSavedDefaults) {
       const save = await confirm({ message: "Set this target configuration as default?", initialValue: false });
-      if (!isCancel(save) && save) {
+      if (isCancel(save)) {
+        cancel("Publish cancelled.");
+        process.exit(0);
+      }
+      if (save) {
         await savePostingDefaults(selection);
       }
     }

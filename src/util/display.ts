@@ -25,13 +25,6 @@ export function createSpinner(text: string) {
   }).start();
 }
 
-export function createNoopSpinner() {
-  return {
-    succeed() {},
-    fail() {},
-  };
-}
-
 export function printPlatformText(platform: Platform, plan: PlatformPlan) {
   console.log("");
   console.log(pc.bold(`${platformName(platform)} text:`));

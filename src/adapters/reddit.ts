@@ -1,11 +1,19 @@
+import { fetchWithTimeout, readJsonResponse } from "../util/http.js";
 import { optionalSecret, resolveSecret } from "../util/secrets.js";
-import { dryRunResult, getReferencedMedia, type PublishContext } from "./common.js";
+import {
+  dryRunResult,
+  getReferencedMedia,
+  publishResult,
+  requireAccount,
+  type PublishContext,
+} from "./common.js";
 
 async function getAccessToken(context: PublishContext) {
-  const account = context.config.accounts?.reddit?.[context.target.account];
-  if (!account) {
-    throw new Error(`Missing Reddit account "${context.target.account}".`);
-  }
+  const account = requireAccount(
+    context.config.accounts?.reddit?.[context.target.account],
+    "reddit",
+    context.target.account
+  );
 
   const clientId = resolveSecret(account.clientId, "Reddit client id");
   const clientSecret = resolveSecret(account.clientSecret, "Reddit client secret");
@@ -22,7 +30,7 @@ async function getAccessToken(context: PublishContext) {
     body.set("password", resolveSecret(account.password, "Reddit password"));
   }
 
-  const response = await fetch("https://www.reddit.com/api/v1/access_token", {
+  const response = await fetchWithTimeout("https://www.reddit.com/api/v1/access_token", {
     method: "POST",
     headers: {
       authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
@@ -31,11 +39,16 @@ async function getAccessToken(context: PublishContext) {
     },
     body,
   });
-  const data = (await response.json().catch(() => null)) as { access_token?: string; error?: string } | null;
-  if (!response.ok || !data?.access_token) {
-    throw new Error(`Reddit OAuth failed (${response.status}): ${data?.error ?? JSON.stringify(data)}`);
+  const { ok, status, data, text } = await readJsonResponse<{ access_token?: string; error?: string }>(response);
+  if (!ok || !data?.access_token) {
+    throw new Error(`Reddit OAuth failed (${status}): ${data?.error ?? text}`);
   }
   return { accessToken: data.access_token, userAgent };
+}
+
+/** Escape Markdown link-breaking characters in alt text. */
+function escapeLinkText(value: string) {
+  return value.replace(/[[\]]/g, "\\$&");
 }
 
 export async function publishToReddit(context: PublishContext) {
@@ -49,13 +62,14 @@ export async function publishToReddit(context: PublishContext) {
   const textParts = context.plan.units.map((unit) => {
     const media = getReferencedMedia(context.media, unit.mediaRefs);
     const mediaMarkdown = media.map((item) => {
+      const alt = escapeLinkText(item.alt);
       if (item.isRemote) {
-        return `![${item.alt}](${item.rawPath})`;
+        return `![${alt}](${item.rawPath})`;
       }
       warnings.push(
         `Reddit public OAuth submit does not support stable native local image uploads; referenced ${item.rawPath} in the post body.`
       );
-      return item.alt ? `[${item.alt}](${item.rawPath})` : item.rawPath;
+      return alt ? `[${alt}](${item.rawPath})` : item.rawPath;
     });
     return [unit.text, ...mediaMarkdown].filter(Boolean).join("\n\n");
   });
@@ -75,7 +89,7 @@ export async function publishToReddit(context: PublishContext) {
     sendreplies: "true",
   });
 
-  const response = await fetch("https://oauth.reddit.com/api/submit", {
+  const response = await fetchWithTimeout("https://oauth.reddit.com/api/submit", {
     method: "POST",
     headers: {
       authorization: `Bearer ${accessToken}`,
@@ -84,25 +98,16 @@ export async function publishToReddit(context: PublishContext) {
     },
     body,
   });
-  const data = (await response.json().catch(() => null)) as {
+  const { ok, status, data } = await readJsonResponse<{
     json?: { data?: { id?: string; url?: string }; errors?: unknown[] };
-  } | null;
-  if (!response.ok || (data?.json?.errors && data.json.errors.length > 0)) {
-    throw new Error(`Reddit submit failed (${response.status}): ${JSON.stringify(data)}`);
+  }>(response);
+  if (!ok || (data?.json?.errors && data.json.errors.length > 0)) {
+    throw new Error(`Reddit submit failed (${status}): ${JSON.stringify(data)}`);
   }
 
-  return {
-    target: context.targetId,
-    platform: "reddit" as const,
-    account: context.target.account,
-    dryRun: false,
-    posts: [
-      {
-        id: data?.json?.data?.id,
-        url: data?.json?.data?.url,
-        text,
-      },
-    ],
-    warnings,
-  };
+  return publishResult(
+    context,
+    [{ id: data?.json?.data?.id, url: data?.json?.data?.url, text }],
+    warnings
+  );
 }

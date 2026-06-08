@@ -1,27 +1,34 @@
-import { dryRunResult, getReferencedMedia, type PublishContext } from "./common.js";
 import type { SourceMedia, ThreadsAccount } from "../types.js";
+import { fetchWithTimeout, readJsonResponse } from "../util/http.js";
 import { resolveSecret } from "../util/secrets.js";
+import {
+  dryRunResult,
+  getReferencedMedia,
+  publishResult,
+  publishThread,
+  requireAccount,
+  type PublishContext,
+} from "./common.js";
 
 const API_BASE = "https://graph.threads.net/v1.0";
+const CONTAINER_POLL_ATTEMPTS = 20;
+const CONTAINER_POLL_DELAY_MS = 2_000;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 type ThreadsContainerResponse = {
   id?: string;
-  error?: { message?: string };
 };
 
 type ThreadsPublishResponse = {
   id?: string;
   permalink?: string;
-  error?: { message?: string };
 };
 
-function getAccount(context: PublishContext): ThreadsAccount {
-  const account = context.config.accounts?.threads?.[context.target.account];
-  if (!account) {
-    throw new Error(`Missing Threads account "${context.target.account}".`);
-  }
-  return account;
-}
+type ThreadsStatusResponse = {
+  status?: string;
+  error_message?: string;
+};
 
 function mediaType(item: SourceMedia) {
   if (item.mime?.startsWith("video/")) {
@@ -37,17 +44,40 @@ function mediaUrlParam(type: string) {
   return type === "VIDEO" ? "video_url" : "image_url";
 }
 
-async function callThreads<T>(path: string, params: URLSearchParams): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+async function postThreads<T>(path: string, params: URLSearchParams): Promise<T> {
+  const response = await fetchWithTimeout(`${API_BASE}${path}`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: params,
   });
-  const data = (await response.json().catch(() => null)) as (T & { error?: { message?: string } }) | null;
-  if (!response.ok || data?.error) {
-    throw new Error(`Threads API failed (${response.status}): ${data?.error?.message ?? JSON.stringify(data)}`);
+  const { ok, status, data, text } = await readJsonResponse<T & { error?: { message?: string } }>(response);
+  if (!ok || data?.error) {
+    throw new Error(`Threads API failed (${status}): ${data?.error?.message ?? text}`);
   }
-  return data as T;
+  if (!data) {
+    throw new Error(`Threads API returned an empty response (${status}).`);
+  }
+  return data;
+}
+
+/** Poll a media container until Meta finishes ingesting the remote media; publishing before this fails. */
+async function waitForContainer(userId: string, accessToken: string, containerId: string) {
+  for (let attempt = 0; attempt < CONTAINER_POLL_ATTEMPTS; attempt += 1) {
+    const params = new URLSearchParams({ fields: "status,error_message", access_token: accessToken });
+    const response = await fetchWithTimeout(`${API_BASE}/${encodeURIComponent(containerId)}?${params.toString()}`);
+    const { ok, status, data, text } = await readJsonResponse<ThreadsStatusResponse>(response);
+    if (!ok) {
+      throw new Error(`Threads container status check failed (${status}): ${text}`);
+    }
+    if (data?.status === "FINISHED") {
+      return;
+    }
+    if (data?.status === "ERROR" || data?.status === "EXPIRED") {
+      throw new Error(`Threads media processing failed: ${data.error_message ?? data.status}`);
+    }
+    await sleep(CONTAINER_POLL_DELAY_MS);
+  }
+  throw new Error(`Threads container ${containerId} did not finish processing in time.`);
 }
 
 async function createContainer({
@@ -88,7 +118,7 @@ async function createContainer({
     params.set("reply_control", replyControl);
   }
 
-  const data = await callThreads<ThreadsContainerResponse>(`/${encodeURIComponent(userId)}/threads`, params);
+  const data = await postThreads<ThreadsContainerResponse>(`/${encodeURIComponent(userId)}/threads`, params);
   if (!data.id) {
     throw new Error(`Threads did not return a container id: ${JSON.stringify(data)}`);
   }
@@ -100,7 +130,7 @@ async function publishContainer(userId: string, accessToken: string, creationId:
     access_token: accessToken,
     creation_id: creationId,
   });
-  const data = await callThreads<ThreadsPublishResponse>(`/${encodeURIComponent(userId)}/threads_publish`, params);
+  const data = await postThreads<ThreadsPublishResponse>(`/${encodeURIComponent(userId)}/threads_publish`, params);
   if (!data.id) {
     throw new Error(`Threads did not return a post id: ${JSON.stringify(data)}`);
   }
@@ -112,35 +142,33 @@ export async function publishToThreads(context: PublishContext) {
     return dryRunResult(context);
   }
 
-  const account = getAccount(context);
+  const account = requireAccount(
+    context.config.accounts?.threads?.[context.target.account],
+    "threads",
+    context.target.account
+  );
   const accessToken = resolveSecret(account.accessToken, "Threads access token");
   const userId = account.userId || "me";
-  const posts = [];
   let replyToId: string | undefined;
 
-  for (const unit of context.plan.units) {
+  const posts = await publishThread(context.plan.units, async (unit) => {
+    const media = getReferencedMedia(context.media, unit.mediaRefs);
     const containerId = await createContainer({
       userId,
       accessToken,
       text: unit.text,
-      media: getReferencedMedia(context.media, unit.mediaRefs),
+      media,
       replyToId,
       replyControl: account.replyControl,
     });
+    // Media containers need a moment for Meta to ingest the remote asset before publishing.
+    if (media.length > 0) {
+      await waitForContainer(userId, accessToken, containerId);
+    }
     const published = await publishContainer(userId, accessToken, containerId);
     replyToId = published.id;
-    posts.push({
-      id: published.id,
-      url: published.permalink,
-      text: unit.text,
-    });
-  }
+    return { id: published.id, url: published.permalink, text: unit.text };
+  });
 
-  return {
-    target: context.targetId,
-    platform: "threads" as const,
-    account: context.target.account,
-    dryRun: false,
-    posts,
-  };
+  return publishResult(context, posts);
 }

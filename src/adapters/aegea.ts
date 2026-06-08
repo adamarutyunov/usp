@@ -1,7 +1,15 @@
 import path from "node:path";
 
+import type { SourceMedia } from "../types.js";
+import { fetchWithTimeout } from "../util/http.js";
 import { resolveSecret } from "../util/secrets.js";
-import { getReferencedMedia, type PublishContext } from "./common.js";
+import {
+  getReferencedMedia,
+  mediaBlob,
+  publishResult,
+  requireAccount,
+  type PublishContext,
+} from "./common.js";
 
 type AegeaUploadResponse = {
   success?: boolean;
@@ -27,8 +35,10 @@ class CookieJar {
   }
 
   store(headers: Headers) {
-    const getSetCookie = (headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
-    const values = getSetCookie?.call(headers) ?? splitSetCookie(headers.get("set-cookie"));
+    // Node 18.14+/undici exposes getSetCookie(), which correctly splits multiple
+    // Set-Cookie headers — unlike naive comma-splitting, which corrupts cookies
+    // whose Expires attribute contains a comma (e.g. "Expires=Wed, 09 Jun 2027").
+    const values = headers.getSetCookie();
     for (const value of values) {
       const firstPart = value.split(";")[0];
       const separator = firstPart?.indexOf("=") ?? -1;
@@ -38,13 +48,6 @@ class CookieJar {
       this.cookies.set(firstPart.slice(0, separator), firstPart.slice(separator + 1));
     }
   }
-}
-
-function splitSetCookie(value: string | null) {
-  if (!value) {
-    return [];
-  }
-  return value.split(/,(?=\s*[^;,]+=)/g).map((item) => item.trim());
 }
 
 function absoluteUrl(baseUrl: string, href: string) {
@@ -128,7 +131,7 @@ class AegeaClient {
       headers.set("cookie", cookie);
     }
 
-    const response = await fetch(absoluteUrl(this.baseUrl, input), {
+    const response = await fetchWithTimeout(absoluteUrl(this.baseUrl, input), {
       ...init,
       headers,
       redirect: "manual",
@@ -169,18 +172,10 @@ class AegeaClient {
     return { token, uploadAction, saveAction };
   }
 
-  async uploadImage(uploadAction: string, token: string, item: { id: string; data?: Buffer; mime?: string; resolvedPath: string }) {
-    if (!item.data) {
-      throw new Error(`Aegea adapter requires loaded local image data: ${item.resolvedPath}`);
-    }
-
+  async uploadImage(uploadAction: string, token: string, item: SourceMedia) {
     const form = new FormData();
     form.set("token", token);
-    form.set(
-      "file",
-      new Blob([new Uint8Array(item.data)], { type: item.mime ?? "application/octet-stream" }),
-      path.basename(item.resolvedPath)
-    );
+    form.set("file", mediaBlob(item, "aegea"), path.basename(item.resolvedPath));
 
     const url = new URL(absoluteUrl(this.baseUrl, uploadAction));
     url.searchParams.set("entity", "note");
@@ -190,7 +185,12 @@ class AegeaClient {
       method: "POST",
       body: form,
     });
-    const data = JSON.parse(response.body) as AegeaUploadResponse;
+    let data: AegeaUploadResponse;
+    try {
+      data = JSON.parse(response.body) as AegeaUploadResponse;
+    } catch {
+      throw new Error(`Aegea image upload returned a non-JSON response: ${response.body.slice(0, 500)}`);
+    }
     if (!data.success || !data.data?.["new-name"]) {
       throw new Error(`Aegea image upload failed: ${data.error?.message ?? response.body}`);
     }
@@ -234,10 +234,11 @@ class AegeaClient {
 }
 
 export async function publishToAegea(context: PublishContext) {
-  const account = context.config.accounts?.aegea?.[context.target.account];
-  if (!account) {
-    throw new Error(`Missing Aegea account "${context.target.account}".`);
-  }
+  const account = requireAccount(
+    context.config.accounts?.aegea?.[context.target.account],
+    "aegea",
+    context.target.account
+  );
 
   const title = (context.plan.title || context.plan.units[0]?.text.split("\n")[0] || "Post").trim().slice(0, 255);
   const baseUrl = account.baseUrl ?? "http://localhost/";
@@ -276,17 +277,5 @@ export async function publishToAegea(context: PublishContext) {
   const draft = await client.saveDraft(form.saveAction, form.token, title, text);
   const published = await client.publishDraft(draft.body);
 
-  return {
-    target: context.targetId,
-    platform: "aegea" as const,
-    account: context.target.account,
-    dryRun: false,
-    posts: [
-      {
-        id: published.noteId,
-        url: published.url,
-        text,
-      },
-    ],
-  };
+  return publishResult(context, [{ id: published.noteId, url: published.url, text }]);
 }

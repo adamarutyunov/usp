@@ -65,7 +65,9 @@ export async function browserPostCommand(file: string | undefined, options: Brow
   const llm = new JsonLlmProcessor(createLlmClient(config.llm));
   const prompts = new ConfigPromptProvider((options.prompt ?? []).map(parsePromptOverride));
   const planner = new LlmPlatformPlanner(prompts, llm);
-  const pipeline = new PublishPipeline(input, planner, new BrowserPoster());
+  // Browser posting drives a single shared browser session, so it must run targets
+  // one at a time (concurrency 1) — also keeps the per-step spinners below coherent.
+  const pipeline = new PublishPipeline(input, planner, new BrowserPoster(), 1);
   let prepareSpinner: ReturnType<typeof createSpinner> | undefined;
   let postSpinner: ReturnType<typeof createSpinner> | undefined;
 

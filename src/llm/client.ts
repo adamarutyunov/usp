@@ -1,6 +1,11 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 import type { LlmConfig, LlmProvider } from "../types.js";
+import { fetchWithTimeout } from "../util/http.js";
 import { optionalSecret, resolveSecret } from "../util/secrets.js";
+
+const LLM_TIMEOUT_MS = 60_000;
+const LLM_MAX_OUTPUT_TOKENS = 8000;
 
 export type LlmClient = {
   provider: LlmProvider;
@@ -43,20 +48,24 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
       model,
       async generate(prompt) {
         const apiKey = resolveSecret(config.apiKey, "OpenAI API key");
-        const response = await fetch("https://api.openai.com/v1/responses", {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${apiKey}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            model,
-            input: prompt,
-            text: {
-              format: { type: "json_object" },
+        const response = await fetchWithTimeout(
+          "https://api.openai.com/v1/responses",
+          {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${apiKey}`,
+              "content-type": "application/json",
             },
-          }),
-        });
+            body: JSON.stringify({
+              model,
+              input: prompt,
+              text: {
+                format: { type: "json_object" },
+              },
+            }),
+          },
+          { timeoutMs: LLM_TIMEOUT_MS }
+        );
 
         const data = (await response.json().catch(() => null)) as {
           output_text?: string;
@@ -82,44 +91,29 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
         "Missing Anthropic API key or auth token. Run usp setup to store one."
       );
     }
+    // The official SDK handles request timeouts and exponential-backoff retry on
+    // 429/5xx/overloaded with typed errors — no need to hand-roll any of it.
+    const client = new Anthropic({
+      ...(apiKey ? { apiKey } : {}),
+      ...(authToken ? { authToken } : {}),
+      timeout: LLM_TIMEOUT_MS,
+      maxRetries: 2,
+    });
     return {
       provider,
       model,
       async generate(prompt) {
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            ...(apiKey ? { "x-api-key": apiKey } : {}),
-            ...(authToken ? { authorization: `Bearer ${authToken}` } : {}),
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: 2000,
-            temperature: 0.3,
-            system: "Return only valid JSON. No Markdown fences. No commentary.",
-            messages: [
-              {
-                role: "user",
-                content: prompt,
-              },
-            ],
-          }),
+        // No `temperature`: it is removed on current Opus models and would 400
+        // if a user selects one; prompting drives the JSON-only behavior instead.
+        const message = await client.messages.create({
+          model,
+          max_tokens: LLM_MAX_OUTPUT_TOKENS,
+          system: "Return only valid JSON. No Markdown fences. No commentary.",
+          messages: [{ role: "user", content: prompt }],
         });
-
-        const data = (await response.json().catch(() => null)) as {
-          content?: Array<{ type?: string; text?: string }>;
-          error?: { message?: string };
-        } | null;
-        if (!response.ok) {
-          throw new Error(
-            `Anthropic request failed (${response.status}): ${data?.error?.message ?? JSON.stringify(data)}`
-          );
-        }
-        const text = data?.content
-          ?.filter((part) => part.type === "text")
-          .map((part) => part.text ?? "")
+        const text = message.content
+          .filter((block): block is Anthropic.TextBlock => block.type === "text")
+          .map((block) => block.text)
           .join("")
           .trim();
         if (!text) {

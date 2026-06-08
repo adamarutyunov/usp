@@ -1,7 +1,17 @@
 import path from "node:path";
 
+import type { SourceMedia } from "../types.js";
+import { fetchWithTimeout, readJsonResponse } from "../util/http.js";
 import { resolveSecret } from "../util/secrets.js";
-import { dryRunResult, getReferencedMedia, type PublishContext } from "./common.js";
+import {
+  dryRunResult,
+  getReferencedMedia,
+  publishResult,
+  publishThread,
+  requireAccount,
+  requireMediaData,
+  type PublishContext,
+} from "./common.js";
 
 type BlueskySession = {
   accessJwt?: string;
@@ -52,17 +62,16 @@ async function callBluesky<T>({
     headers.authorization = `Bearer ${accessJwt}`;
   }
 
-  const response = await fetch(`${pdsUrl}/xrpc/${method}`, {
+  const response = await fetchWithTimeout(`${pdsUrl}/xrpc/${method}`, {
     method: "POST",
     headers,
     body: contentType === "application/json" ? JSON.stringify(body) : (body as BodyInit),
   });
-  const text = await response.text();
-  const data = text ? (JSON.parse(text) as T) : ({} as T);
-  if (!response.ok) {
-    throw new Error(`Bluesky ${method} failed (${response.status}): ${text}`);
+  const { ok, status, data, text } = await readJsonResponse<T>(response);
+  if (!ok) {
+    throw new Error(`Bluesky ${method} failed (${status}): ${text}`);
   }
-  return data;
+  return data ?? ({} as T);
 }
 
 async function createSession(pdsUrl: string, identifier: string, password: string) {
@@ -84,22 +93,20 @@ async function uploadBlob({
 }: {
   pdsUrl: string;
   accessJwt: string;
-  item: { data?: Buffer; mime?: string; resolvedPath: string };
+  item: SourceMedia;
 }) {
-  if (!item.data) {
-    throw new Error(`Bluesky adapter requires loaded local image data: ${item.resolvedPath}`);
-  }
-  const data = await callBluesky<BlueskyBlobResponse>({
+  const data = requireMediaData(item, "bluesky");
+  const result = await callBluesky<BlueskyBlobResponse>({
     pdsUrl,
     method: "com.atproto.repo.uploadBlob",
     accessJwt,
     contentType: item.mime ?? "application/octet-stream",
-    body: new Uint8Array(item.data),
+    body: new Uint8Array(data),
   });
-  if (!data.blob) {
+  if (!result.blob) {
     throw new Error(`Bluesky uploadBlob response did not include blob for ${path.basename(item.resolvedPath)}.`);
   }
-  return data.blob;
+  return result.blob;
 }
 
 function makeRecord({
@@ -136,33 +143,32 @@ export async function publishToBluesky(context: PublishContext) {
     return dryRunResult(context);
   }
 
-  const account = context.config.accounts?.bluesky?.[context.target.account];
-  if (!account) {
-    throw new Error(`Missing Bluesky account "${context.target.account}".`);
-  }
+  const account = requireAccount(
+    context.config.accounts?.bluesky?.[context.target.account],
+    "bluesky",
+    context.target.account
+  );
 
   const pdsUrl = normalizePdsUrl(account.pdsUrl);
   const identifier = resolveSecret(account.identifier, "Bluesky identifier");
   const appPassword = resolveSecret(account.appPassword, "Bluesky app password");
   const session = await createSession(pdsUrl, identifier, appPassword);
   const handleOrDid = (session.handle || identifier).replace(/^@/, "");
-  const posts = [];
   let root: BlueskyPostRef | undefined;
   let parent: BlueskyPostRef | undefined;
 
-  for (const unit of context.plan.units) {
+  const posts = await publishThread(context.plan.units, async (unit) => {
     const media = getReferencedMedia(context.media, unit.mediaRefs);
     if (media.length > 4) {
       throw new Error(`Bluesky supports up to 4 images per post; target "${context.targetId}" has ${media.length}.`);
     }
 
-    const blobs = [];
-    for (const item of media) {
-      blobs.push({
+    const blobs = await Promise.all(
+      media.map(async (item) => ({
         alt: item.alt,
         blob: await uploadBlob({ pdsUrl, accessJwt: session.accessJwt, item }),
-      });
-    }
+      }))
+    );
 
     const response = await callBluesky<BlueskyRecordResponse>({
       pdsUrl,
@@ -185,18 +191,8 @@ export async function publishToBluesky(context: PublishContext) {
     const ref = { uri: response.uri, cid: response.cid };
     root ??= ref;
     parent = ref;
-    posts.push({
-      id: response.uri,
-      url: postUrl(handleOrDid, response.uri),
-      text: unit.text,
-    });
-  }
+    return { id: response.uri, url: postUrl(handleOrDid, response.uri), text: unit.text };
+  });
 
-  return {
-    target: context.targetId,
-    platform: "bluesky" as const,
-    account: context.target.account,
-    dryRun: false,
-    posts,
-  };
+  return publishResult(context, posts);
 }

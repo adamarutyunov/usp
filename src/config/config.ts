@@ -10,15 +10,19 @@ export const DEFAULT_CONFIG_NAMES = ["usp.config.yml", ".usp.yml"];
 
 // Account fields that can be supplied via environment variables, by convention
 // `${PLATFORM}_${FIELD}` (e.g. X_CONSUMER_KEY, DISCORD_WEBHOOK_URL, TELEGRAM_BOT_TOKEN).
+// These are *account*-scoped only. Per-target routing fields (telegram `chatId`,
+// reddit `subreddit`, discord `threadId`) are deliberately excluded: an account may
+// have many targets, so a single `PLATFORM_FIELD` env var cannot address them — set
+// routing in the config/`.usp.yml` instead.
 const ACCOUNT_ENV_FIELDS: Record<Platform, string[]> = {
   x: ["consumerKey", "consumerSecret", "accessToken", "accessTokenSecret"],
   linkedin: ["accessToken", "author", "version"],
-  reddit: ["clientId", "clientSecret", "refreshToken", "username", "password", "subreddit", "userAgent"],
-  telegram: ["botToken", "chatId"],
+  reddit: ["clientId", "clientSecret", "refreshToken", "username", "password", "userAgent"],
+  telegram: ["botToken"],
   aegea: ["baseUrl", "password"],
   bluesky: ["identifier", "appPassword", "pdsUrl"],
   mastodon: ["instanceUrl", "accessToken", "visibility"],
-  discord: ["webhookUrl", "threadId", "username", "avatarUrl"],
+  discord: ["webhookUrl", "username", "avatarUrl"],
   threads: ["accessToken", "userId", "username", "replyControl"],
 };
 

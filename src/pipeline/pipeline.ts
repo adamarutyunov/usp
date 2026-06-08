@@ -1,5 +1,6 @@
-import type { Platform, PublishPlan, PublishTargetResult, TargetConfig, UspConfig } from "../types.js";
+import type { Platform, PlatformPlan, PublishPlan, PublishTargetResult, TargetConfig, UspConfig } from "../types.js";
 import type { PreviewStore } from "../preview/store.js";
+import { PartialPublishError } from "../adapters/common.js";
 import {
   InputSource,
   PlatformPlanner,
@@ -9,12 +10,37 @@ import {
   type TargetRef,
 } from "./contracts.js";
 
+const DEFAULT_CONCURRENCY = 4;
+
 export type PipelineRunResult = {
   input: PipelineInput;
   plan: PublishPlan;
   results: PublishTargetResult[];
   previewDir?: string;
 };
+
+/** Run `fn` over items with at most `limit` in flight, preserving input order in the results. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = next;
+      next += 1;
+      if (index >= items.length) {
+        return;
+      }
+      results[index] = await fn(items[index]!, index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
 export type PreviewPublishOptions = {
   store: PreviewStore;
@@ -34,7 +60,11 @@ function createEmptyPlan(input: PipelineInput): PublishPlan {
   };
 }
 
-function formatError(error: unknown) {
+function formatError(error: unknown): string {
+  // A partial-thread failure: report the underlying cause, not the wrapper.
+  if (error instanceof PartialPublishError) {
+    return formatError(error.cause);
+  }
   if (!error || typeof error !== "object") {
     return String(error);
   }
@@ -47,7 +77,9 @@ function formatError(error: unknown) {
   if (details.data) {
     parts.push(`body=${JSON.stringify(details.data)}`);
   }
-  if (details.cause && typeof details.cause !== "object") {
+  if (details.cause instanceof Error) {
+    parts.push(`cause=${details.cause.message}`);
+  } else if (details.cause !== undefined && typeof details.cause !== "object") {
     parts.push(`cause=${String(details.cause)}`);
   }
   return parts.join(" ");
@@ -61,19 +93,19 @@ function errorResult(target: { id: string; config: TargetConfig }, error: unknow
     dryRun,
     ok: false,
     error: formatError(error),
-    posts: [],
+    // Surface any posts that already went live mid-thread so they are not re-published.
+    posts: error instanceof PartialPublishError ? error.posts : [],
   };
 }
 
-function previewResult(target: { id: string; config: TargetConfig }, plan: PublishPlan): PublishTargetResult {
-  const targetPlan = plan.targets?.[target.id] ?? plan.platforms[target.config.platform];
+function previewResult(target: { id: string; config: TargetConfig }, platformPlan: PlatformPlan): PublishTargetResult {
   return {
     target: target.id,
     platform: target.config.platform,
     account: target.config.account,
     dryRun: true,
     ok: true,
-    posts: (targetPlan?.units ?? []).map((unit) => ({ text: unit.text })),
+    posts: (platformPlan.units ?? []).map((unit) => ({ text: unit.text })),
   };
 }
 
@@ -81,7 +113,8 @@ export class PublishPipeline {
   constructor(
     private readonly inputSource: InputSource,
     private readonly planner: PlatformPlanner,
-    private readonly poster: Poster
+    private readonly poster: Poster,
+    private readonly concurrency: number = DEFAULT_CONCURRENCY
   ) {}
 
   async planOnly({
@@ -130,149 +163,100 @@ export class PublishPipeline {
     hooks?: PipelineHooks;
   }): Promise<PipelineRunResult> {
     const input = await this.inputSource.read();
-    const plan = createEmptyPlan(input);
-    const results: PublishTargetResult[] = [];
-    const plannedByKey = new Map<string, PublishPlan["platforms"][Platform]>();
+    const basePlan = createEmptyPlan(input);
     const previewSession = preview?.store.open(input);
     const previewDir = previewSession?.dir;
     const previewExists = previewSession ? await previewSession.exists() : false;
-    const usePreview = Boolean(previewSession && (preview?.previewOnly || previewExists));
+    const previewActive = Boolean(previewSession && preview && (preview.previewOnly || previewExists));
+    const previewOnly = Boolean(preview?.previewOnly);
     let reusePreview = false;
 
-    if (previewSession && preview && usePreview) {
+    if (previewActive && previewSession && preview) {
       hooks.onPreviewDirectory?.(previewSession.dir);
       reusePreview = previewExists
         ? (await preview.onExistingDirectory?.(previewSession.dir)) === "reuse"
         : false;
     }
 
-    for (const target of targets) {
-      const platform = target.config.platform;
-      if (previewSession && preview && usePreview) {
-        if (reusePreview) {
-          hooks.onPrepareStart?.(target);
-          const cached = await previewSession.read(target);
-          if (cached) {
-            plan.targets![target.id] = cached;
-            plan.platforms[platform] = cached;
-            hooks.onPreviewReuse?.(target);
-            hooks.onPrepareSuccess?.(target, cached);
+    // Dedup identical plans: by target id under preview (each has its own file),
+    // otherwise by platform+postMode so same-platform targets share one LLM call.
+    const planMemo = new Map<string, Promise<PlatformPlan>>();
 
-            if (preview.previewOnly) {
-              results.push(previewResult(target, plan));
-              continue;
-            }
-          }
-        }
-
-        if (!plan.targets?.[target.id]) {
-          if (!reusePreview) {
-            hooks.onPrepareStart?.(target);
-          }
-          try {
-            const targetPlan = await this.planner.plan({ input, target, config });
-            plan.targets![target.id] = targetPlan;
-            plan.platforms[platform] = targetPlan;
-            hooks.onPrepareSuccess?.(target, targetPlan);
-            await previewSession.write(target, targetPlan);
-            hooks.onPreviewWrite?.(target, previewSession.filePath(target));
-          } catch (error) {
-            hooks.onPrepareError?.(target, error);
-            results.push(errorResult(target, error, true));
-            continue;
-          }
-        }
-
-        if (preview.previewOnly) {
-          results.push(previewResult(target, plan));
-          continue;
-        }
-
-        if (dryRun) {
-          results.push(
-            await this.poster.post({
-              targetId: target.id,
-              target: target.config,
-              config,
-              plan,
-              media: input.media,
-              dryRun: true,
-            })
-          );
-          continue;
-        }
-
-        hooks.onPostStart?.(target);
-        try {
-          const result = await this.poster.post({
-            targetId: target.id,
-            target: target.config,
-            config,
-            plan,
-            media: input.media,
-            dryRun: false,
-          });
-          const withStatus = { ...result, ok: true };
-          results.push(withStatus);
-          hooks.onPostSuccess?.(target, withStatus);
-        } catch (error) {
-          hooks.onPostError?.(target, error);
-          results.push(errorResult(target, error, false));
-        }
-        continue;
-      }
-
-      const planKey = `${platform}:${target.postMode ?? "llm"}`;
-      let targetPlan = plannedByKey.get(planKey);
-      if (!targetPlan) {
-        hooks.onPrepareStart?.(target);
-        try {
-          targetPlan = await this.planner.plan({ input, target, config });
-          plannedByKey.set(planKey, targetPlan);
-          hooks.onPrepareSuccess?.(target, targetPlan);
-        } catch (error) {
-          hooks.onPrepareError?.(target, error);
-          results.push(errorResult(target, error, dryRun));
-          continue;
+    const resolvePlan = async (target: TargetRef): Promise<PlatformPlan> => {
+      if (previewActive && reusePreview && previewSession) {
+        const cached = await previewSession.read(target);
+        if (cached) {
+          hooks.onPreviewReuse?.(target);
+          return cached;
         }
       }
-      plan.targets![target.id] = targetPlan;
-      plan.platforms[platform] = targetPlan;
+
+      const key = previewActive ? target.id : `${target.config.platform}:${target.postMode ?? "llm"}`;
+      let pending = planMemo.get(key);
+      if (!pending) {
+        pending = this.planner.plan({ input, target, config });
+        planMemo.set(key, pending);
+      }
+      const plan = await pending;
+
+      if (previewActive && previewSession) {
+        await previewSession.write(target, plan);
+        hooks.onPreviewWrite?.(target, previewSession.filePath(target));
+      }
+      return plan;
+    };
+
+    // Per-target plan handed to the poster; avoids a shared `plan.platforms`
+    // that same-platform targets would otherwise clobber for one another.
+    const singleTargetPlan = (target: TargetRef, platformPlan: PlatformPlan): PublishPlan => ({
+      ...basePlan,
+      platforms: { [target.config.platform]: platformPlan },
+      targets: { [target.id]: platformPlan },
+    });
+
+    const processTarget = async (target: TargetRef): Promise<PublishTargetResult> => {
+      hooks.onPrepareStart?.(target);
+      let platformPlan: PlatformPlan;
+      try {
+        platformPlan = await resolvePlan(target);
+        hooks.onPrepareSuccess?.(target, platformPlan);
+      } catch (error) {
+        hooks.onPrepareError?.(target, error);
+        return errorResult(target, error, previewOnly || dryRun);
+      }
+      basePlan.targets![target.id] = platformPlan;
+
+      if (previewOnly) {
+        return previewResult(target, platformPlan);
+      }
+
+      const targetPlan = singleTargetPlan(target, platformPlan);
+      const postRequest = {
+        targetId: target.id,
+        target: target.config,
+        config,
+        plan: targetPlan,
+        media: input.media,
+      };
 
       if (dryRun) {
-        results.push(
-          await this.poster.post({
-            targetId: target.id,
-            target: target.config,
-            config,
-            plan,
-            media: input.media,
-            dryRun: true,
-          })
-        );
-        continue;
+        return this.poster.post({ ...postRequest, dryRun: true });
       }
 
       hooks.onPostStart?.(target);
       try {
-        const result = await this.poster.post({
-          targetId: target.id,
-          target: target.config,
-          config,
-          plan,
-          media: input.media,
-          dryRun: false,
-        });
+        const result = await this.poster.post({ ...postRequest, dryRun: false });
         const withStatus = { ...result, ok: true };
-        results.push(withStatus);
         hooks.onPostSuccess?.(target, withStatus);
+        return withStatus;
       } catch (error) {
         hooks.onPostError?.(target, error);
-        results.push(errorResult(target, error, false));
+        return errorResult(target, error, false);
       }
-    }
+    };
 
-    return { input, plan, results, previewDir };
+    const results = await mapWithConcurrency(targets, this.concurrency, processTarget);
+    return { input, plan: basePlan, results, previewDir };
   }
 }
 

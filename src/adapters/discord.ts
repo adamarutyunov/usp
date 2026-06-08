@@ -1,7 +1,17 @@
 import path from "node:path";
 
+import type { SourceMedia } from "../types.js";
+import { fetchWithTimeout, readJsonResponse } from "../util/http.js";
 import { resolveSecret } from "../util/secrets.js";
-import { dryRunResult, getReferencedMedia, type PublishContext } from "./common.js";
+import {
+  dryRunResult,
+  getReferencedMedia,
+  mediaBlob,
+  publishResult,
+  publishThread,
+  requireAccount,
+  type PublishContext,
+} from "./common.js";
 
 type DiscordMessage = {
   id?: string;
@@ -43,7 +53,7 @@ async function sendWebhook({
 }: {
   webhookUrl: string;
   content: string;
-  media: Array<{ data?: Buffer; mime?: string; rawPath: string; resolvedPath: string; alt: string }>;
+  media: SourceMedia[];
   threadId?: string;
   username?: string;
   avatarUrl?: string;
@@ -75,29 +85,21 @@ async function sendWebhook({
     form.set("payload_json", JSON.stringify(payload));
 
     for (const [index, item] of media.entries()) {
-      if (!item.data) {
-        throw new Error(`Discord adapter requires loaded image data: ${item.resolvedPath}`);
-      }
-      form.set(
-        `files[${index}]`,
-        new Blob([new Uint8Array(item.data)], { type: item.mime ?? "application/octet-stream" }),
-        mediaFilename(item)
-      );
+      form.set(`files[${index}]`, mediaBlob(item, "discord"), mediaFilename(item));
     }
     body = form;
   }
 
-  const response = await fetch(webhookEndpoint(webhookUrl, threadId), {
+  const response = await fetchWithTimeout(webhookEndpoint(webhookUrl, threadId), {
     method: "POST",
     headers,
     body,
   });
-  const text = await response.text();
-  const data = text ? (JSON.parse(text) as DiscordMessage) : {};
-  if (!response.ok) {
-    throw new Error(`Discord webhook failed (${response.status}): ${text}`);
+  const { ok, status, data, text } = await readJsonResponse<DiscordMessage>(response);
+  if (!ok) {
+    throw new Error(`Discord webhook failed (${status}): ${text}`);
   }
-  return data;
+  return data ?? {};
 }
 
 export async function publishToDiscord(context: PublishContext) {
@@ -105,16 +107,16 @@ export async function publishToDiscord(context: PublishContext) {
     return dryRunResult(context);
   }
 
-  const account = context.config.accounts?.discord?.[context.target.account];
-  if (!account) {
-    throw new Error(`Missing Discord account "${context.target.account}".`);
-  }
+  const account = requireAccount(
+    context.config.accounts?.discord?.[context.target.account],
+    "discord",
+    context.target.account
+  );
 
   const webhookUrl = resolveSecret(account.webhookUrl, "Discord webhook URL");
   const threadId = context.target.threadId;
-  const posts = [];
 
-  for (const unit of context.plan.units) {
+  const posts = await publishThread(context.plan.units, async (unit) => {
     const media = getReferencedMedia(context.media, unit.mediaRefs);
     if (media.length > 10) {
       throw new Error(`Discord supports up to 10 files per message; target "${context.targetId}" has ${media.length}.`);
@@ -128,18 +130,8 @@ export async function publishToDiscord(context: PublishContext) {
       username: account.username,
       avatarUrl: account.avatarUrl,
     });
-    posts.push({
-      id: message.id,
-      url: discordMessageUrl(message),
-      text: unit.text,
-    });
-  }
+    return { id: message.id, url: discordMessageUrl(message), text: unit.text };
+  });
 
-  return {
-    target: context.targetId,
-    platform: "discord" as const,
-    account: context.target.account,
-    dryRun: false,
-    posts,
-  };
+  return publishResult(context, posts);
 }

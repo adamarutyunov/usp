@@ -1,7 +1,17 @@
 import path from "node:path";
 
+import type { SourceMedia } from "../types.js";
+import { fetchWithTimeout, readJsonResponse } from "../util/http.js";
 import { resolveSecret } from "../util/secrets.js";
-import { dryRunResult, getReferencedMedia, type PublishContext } from "./common.js";
+import {
+  dryRunResult,
+  getReferencedMedia,
+  mediaBlob,
+  publishResult,
+  publishThread,
+  requireAccount,
+  type PublishContext,
+} from "./common.js";
 
 type MastodonMedia = {
   id?: string;
@@ -14,19 +24,16 @@ type MastodonStatus = {
   uri?: string;
 };
 
+const MEDIA_POLL_ATTEMPTS = 15;
+const MEDIA_POLL_MAX_DELAY_MS = 8_000;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 function normalizeInstanceUrl(value: string | undefined) {
   if (!value) {
     throw new Error("Missing Mastodon instanceUrl. Provide it in config.");
   }
   return value.replace(/\/+$/, "");
-}
-
-async function readJson<T>(response: Response) {
-  const text = await response.text();
-  return {
-    text,
-    data: text ? (JSON.parse(text) as T) : ({} as T),
-  };
 }
 
 async function uploadMedia({
@@ -36,51 +43,47 @@ async function uploadMedia({
 }: {
   instanceUrl: string;
   accessToken: string;
-  item: { data?: Buffer; mime?: string; resolvedPath: string; alt: string };
-}) {
-  if (!item.data) {
-    throw new Error(`Mastodon adapter requires loaded local image data: ${item.resolvedPath}`);
-  }
-
+  item: SourceMedia;
+}): Promise<string> {
   const form = new FormData();
-  form.set(
-    "file",
-    new Blob([new Uint8Array(item.data)], { type: item.mime ?? "application/octet-stream" }),
-    path.basename(item.resolvedPath)
-  );
+  form.set("file", mediaBlob(item, "mastodon"), path.basename(item.resolvedPath));
   if (item.alt) {
     form.set("description", item.alt);
   }
 
-  const response = await fetch(`${instanceUrl}/api/v2/media`, {
+  const response = await fetchWithTimeout(`${instanceUrl}/api/v2/media`, {
     method: "POST",
     headers: { authorization: `Bearer ${accessToken}` },
     body: form,
   });
-  const { text, data } = await readJson<MastodonMedia>(response);
-  if (!response.ok || !data.id) {
-    throw new Error(`Mastodon media upload failed (${response.status}): ${text}`);
+  const { ok, status, data, text } = await readJsonResponse<MastodonMedia>(response);
+  if (!ok || !data?.id) {
+    throw new Error(`Mastodon media upload failed (${status}): ${text}`);
   }
 
-  if (data.url || response.status !== 202) {
+  // A populated `url` means processing is complete. Otherwise the attachment is
+  // still being processed (Mastodon returns 202, or 200 with a null url) and
+  // attaching it to a status would be rejected — poll until it is ready.
+  if (data.url) {
     return data.id;
   }
 
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    const poll = await fetch(`${instanceUrl}/api/v1/media/${encodeURIComponent(data.id)}`, {
+  const mediaId = data.id;
+  for (let attempt = 0; attempt < MEDIA_POLL_ATTEMPTS; attempt += 1) {
+    await sleep(Math.min(1000 * 2 ** attempt, MEDIA_POLL_MAX_DELAY_MS));
+    const poll = await fetchWithTimeout(`${instanceUrl}/api/v1/media/${encodeURIComponent(mediaId)}`, {
       headers: { authorization: `Bearer ${accessToken}` },
     });
-    const polled = await readJson<MastodonMedia>(poll);
+    const polled = await readJsonResponse<MastodonMedia>(poll);
     if (!poll.ok) {
       throw new Error(`Mastodon media processing check failed (${poll.status}): ${polled.text}`);
     }
-    if (polled.data.url) {
-      return data.id;
+    if (polled.data?.url) {
+      return mediaId;
     }
   }
 
-  return data.id;
+  throw new Error(`Mastodon media ${mediaId} did not finish processing in time.`);
 }
 
 async function publishStatus({
@@ -108,7 +111,7 @@ async function publishStatus({
     body.set("in_reply_to_id", inReplyToId);
   }
 
-  const response = await fetch(`${instanceUrl}/api/v1/statuses`, {
+  const response = await fetchWithTimeout(`${instanceUrl}/api/v1/statuses`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${accessToken}`,
@@ -116,9 +119,9 @@ async function publishStatus({
     },
     body,
   });
-  const { text, data } = await readJson<MastodonStatus>(response);
-  if (!response.ok || !data.id) {
-    throw new Error(`Mastodon status post failed (${response.status}): ${text}`);
+  const { ok, status: httpStatus, data, text } = await readJsonResponse<MastodonStatus>(response);
+  if (!ok || !data?.id) {
+    throw new Error(`Mastodon status post failed (${httpStatus}): ${text}`);
   }
   return data;
 }
@@ -128,27 +131,24 @@ export async function publishToMastodon(context: PublishContext) {
     return dryRunResult(context);
   }
 
-  const account = context.config.accounts?.mastodon?.[context.target.account];
-  if (!account) {
-    throw new Error(`Missing Mastodon account "${context.target.account}".`);
-  }
+  const account = requireAccount(
+    context.config.accounts?.mastodon?.[context.target.account],
+    "mastodon",
+    context.target.account
+  );
 
   const instanceUrl = normalizeInstanceUrl(account.instanceUrl);
   const accessToken = resolveSecret(account.accessToken, "Mastodon access token");
   const visibility = account.visibility ?? "public";
-  const posts = [];
   let previousStatusId: string | undefined;
 
-  for (const unit of context.plan.units) {
+  const posts = await publishThread(context.plan.units, async (unit) => {
     const media = getReferencedMedia(context.media, unit.mediaRefs);
     if (media.length > 4) {
       throw new Error(`Mastodon supports up to 4 media attachments per status; target "${context.targetId}" has ${media.length}.`);
     }
 
-    const mediaIds = [];
-    for (const item of media) {
-      mediaIds.push(await uploadMedia({ instanceUrl, accessToken, item }));
-    }
+    const mediaIds = await Promise.all(media.map((item) => uploadMedia({ instanceUrl, accessToken, item })));
 
     const status = await publishStatus({
       instanceUrl,
@@ -159,18 +159,8 @@ export async function publishToMastodon(context: PublishContext) {
       inReplyToId: previousStatusId,
     });
     previousStatusId = status.id;
-    posts.push({
-      id: status.id,
-      url: status.url ?? status.uri,
-      text: unit.text,
-    });
-  }
+    return { id: status.id, url: status.url ?? status.uri, text: unit.text };
+  });
 
-  return {
-    target: context.targetId,
-    platform: "mastodon" as const,
-    account: context.target.account,
-    dryRun: false,
-    posts,
-  };
+  return publishResult(context, posts);
 }

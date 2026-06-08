@@ -107,7 +107,13 @@ export class PreviewSession {
       throw error;
     }
 
-    const parsed = JSON.parse(raw) as Partial<PreviewFile>;
+    let parsed: Partial<PreviewFile>;
+    try {
+      parsed = JSON.parse(raw) as Partial<PreviewFile>;
+    } catch {
+      // A corrupt or hand-edited preview file is a cache miss, not a fatal error.
+      return undefined;
+    }
     if (
       parsed.version !== 1 ||
       parsed.target?.id !== target.id ||
