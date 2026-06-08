@@ -1,111 +1,62 @@
+# Example usp project config (.usp.yml).
+#
+# Structure is nested: platform -> account (auth) -> targets (where you post + an optional prompt).
+# Credentials normally live in ~/.config/usp/social-auth (written by `usp setup`) or come from
+# environment variables, NOT in this committed file. They are shown inline here only as a reference.
+
 llm:
   provider: gemini
   model: gemini-2.5-flash-lite
-  apiKey: paste-gemini-api-key-here
+  # apiKey: comes from GEMINI_API_KEY by convention, or run `usp setup`.
 
+# Optional platform-level prompt tweaks (layer 2). Applies to every target of the platform.
+prompts:
+  x:
+    mode: append
+    text: House style — terse and factual.
+
+accounts:
+  # X: one account posts to its own timeline. Extra targets are just prompt variants.
+  x:
+    main:
+      # consumerKey / consumerSecret / accessToken / accessTokenSecret -> social-auth or X_* env vars
+      targets:
+        default: {}
+        es:
+          prompt:
+            mode: replace
+            text: Escribe un solo tuit en español.
+
+  # Telegram: one bot (account) posts to many chats (targets).
+  telegram:
+    newsbot:
+      # botToken -> social-auth or TELEGRAM_BOT_TOKEN
+      targets:
+        en:
+          chatId: "@your_channel"
+        ru:
+          chatId: "@your_channel_ru"
+          prompt:
+            mode: append
+            text: Write in Russian.
+
+  # Reddit: one account posts to many subreddits (targets).
+  reddit:
+    main:
+      # clientId / clientSecret / refreshToken -> social-auth or REDDIT_* env vars
+      targets:
+        showoff:
+          subreddit: reddit_api_test
+
+# A profile is a named set of target ids (platform/account/target).
 profiles:
   default:
     targets:
-      - x-main
-      - linkedin-me
-      - reddit-release
-      - telegram-channel
-      - aegea-blog
-      - bluesky-main
-      - mastodon-main
-      - discord-main
-      - threads-main
+      - x/main/default
+      - telegram/newsbot/en
+      - reddit/main/showoff
 
-targets:
-  x-main:
-    platform: x
-    account: main
-
-  linkedin-me:
-    platform: linkedin
-    account: me
-
-  reddit-release:
-    platform: reddit
-    account: main
-
-  telegram-channel:
-    platform: telegram
-    account: main
-
-  aegea-blog:
-    platform: aegea
-    account: main
-
-  bluesky-main:
-    platform: bluesky
-    account: main
-
-  mastodon-main:
-    platform: mastodon
-    account: main
-
-  discord-main:
-    platform: discord
-    account: main
-
-  threads-main:
-    platform: threads
-    account: main
-
-accounts:
-  x:
-    main:
-      consumerKey: paste-x-consumer-key-here
-      consumerSecret: paste-x-consumer-secret-here
-      accessToken: paste-x-access-token-here
-      accessTokenSecret: paste-x-access-token-secret-here
-
-  linkedin:
-    me:
-      accessToken: paste-linkedin-access-token-here
-      author: urn:li:person:YOUR_PERSON_ID
-      version: "202602"
-
-  reddit:
-    main:
-      clientId: paste-reddit-client-id-here
-      clientSecret: paste-reddit-client-secret-here
-      refreshToken: paste-reddit-refresh-token-here
-      subreddit: reddit_api_test
-      userAgent: usp/0.1.0 by YOUR_REDDIT_USERNAME
-
-  telegram:
-    main:
-      botToken: paste-telegram-bot-token-here
-      chatId: "@your_channel"
-
-  aegea:
-    main:
-      baseUrl: http://localhost/
-      password: paste-aegea-password-here
-
-  bluesky:
-    main:
-      identifier: your-handle.bsky.social
-      appPassword: paste-bluesky-app-password-here
-      pdsUrl: https://bsky.social
-
-  mastodon:
-    main:
-      instanceUrl: https://mastodon.social
-      accessToken: paste-mastodon-access-token-here
-      visibility: public
-
-  discord:
-    main:
-      webhookUrl: paste-discord-webhook-url-here
-      username: Ultimate Social Poster
-      avatarUrl: ""
-
-  threads:
-    main:
-      accessToken: paste-threads-access-token-here
-      userId: me
-      username: your_threads_username
-      replyControl: everyone
+# Per-target defaults for the interactive publish picker: off | as-is | llm.
+postingDefaults:
+  x/main/default: llm
+  telegram/newsbot/en: as-is

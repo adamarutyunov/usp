@@ -13,6 +13,28 @@ export type LlmProvider = "gemini" | "openai" | "anthropic";
 
 export type PostMode = "off" | "as-is" | "llm";
 
+/** Layer 3: a user override that appends to or replaces the built-in prompt layers. */
+export type PromptLayer = {
+  mode: "append" | "replace";
+  text: string;
+};
+
+/**
+ * A concrete posting destination under an account: routing fields plus an optional
+ * prompt override. Authored nested under `accounts.<platform>.<account>.targets`.
+ */
+export type TargetRouting = {
+  subreddit?: string;
+  chatId?: string;
+  threadId?: string;
+  prompt?: PromptLayer;
+};
+
+/** Mixed into every account type so accounts can hold their nested targets. */
+export type AccountTargets = {
+  targets?: Record<string, TargetRouting>;
+};
+
 export type JsonObject = Record<string, unknown>;
 
 export type SecretValue = string | undefined;
@@ -44,12 +66,10 @@ export type RedditAccount = {
   username?: SecretValue;
   password?: SecretValue;
   userAgent?: string;
-  subreddit?: string;
 };
 
 export type TelegramAccount = {
   botToken?: SecretValue;
-  chatId?: string;
 };
 
 export type AegeaAccount = {
@@ -71,7 +91,6 @@ export type MastodonAccount = {
 
 export type DiscordAccount = {
   webhookUrl?: SecretValue;
-  threadId?: string;
   username?: string;
   avatarUrl?: string;
 };
@@ -84,15 +103,15 @@ export type ThreadsAccount = {
 };
 
 export type AccountsConfig = {
-  x?: Record<string, XAccount>;
-  linkedin?: Record<string, LinkedInAccount>;
-  reddit?: Record<string, RedditAccount>;
-  telegram?: Record<string, TelegramAccount>;
-  aegea?: Record<string, AegeaAccount>;
-  bluesky?: Record<string, BlueskyAccount>;
-  mastodon?: Record<string, MastodonAccount>;
-  discord?: Record<string, DiscordAccount>;
-  threads?: Record<string, ThreadsAccount>;
+  x?: Record<string, XAccount & AccountTargets>;
+  linkedin?: Record<string, LinkedInAccount & AccountTargets>;
+  reddit?: Record<string, RedditAccount & AccountTargets>;
+  telegram?: Record<string, TelegramAccount & AccountTargets>;
+  aegea?: Record<string, AegeaAccount & AccountTargets>;
+  bluesky?: Record<string, BlueskyAccount & AccountTargets>;
+  mastodon?: Record<string, MastodonAccount & AccountTargets>;
+  discord?: Record<string, DiscordAccount & AccountTargets>;
+  threads?: Record<string, ThreadsAccount & AccountTargets>;
 };
 
 export type BrowserAuthProfile = {
@@ -106,10 +125,14 @@ export type BrowserAuthProfile = {
 
 export type BrowserAuthConfig = Partial<Record<Platform, Record<string, BrowserAuthProfile>>>;
 
+/**
+ * A target resolved for the runtime pipeline. Built by normalizing the nested
+ * `accounts.<platform>.<account>.targets` into a flat map keyed by `platform/account/name`.
+ */
 export type TargetConfig = {
   platform: Platform;
   account: string;
-  prompt?: string;
+  prompt?: PromptLayer;
   subreddit?: string;
   chatId?: string;
   threadId?: string;
@@ -120,18 +143,15 @@ export type ProfileConfig = {
   targets: string[];
 };
 
-/** Layer 3: a user override that appends to or replaces the built-in prompt layers. */
-export type PromptLayer = {
-  mode: "append" | "replace";
-  text: string;
-};
-
 export type UspConfig = {
   llm?: LlmConfig;
   accounts?: AccountsConfig;
   browserAuth?: BrowserAuthConfig;
   targets?: Record<string, TargetConfig>;
   profiles?: Record<string, ProfileConfig>;
+  /** Layer 1 addition: user's global rules, appended to the built-in base guidance (append-only). */
+  globalPrompt?: string;
+  /** Layer 2 overrides, one per platform. */
   prompts?: Partial<Record<Platform, PromptLayer>>;
   postingDefaults?: Record<string, PostMode>;
 };

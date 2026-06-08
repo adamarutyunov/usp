@@ -81,6 +81,30 @@ describe("prompt provider", () => {
     expect(prompt).toContain("Return only valid JSON");
   });
 
+  it("appends the global prompt to the base guidance", () => {
+    const provider = new ConfigPromptProvider();
+    const prompt = provider.build({
+      input,
+      platform: "x",
+      target: { platform: "x", account: "main" },
+      config: { globalPrompt: "Always write in British English." },
+    });
+    expect(prompt).toContain("Always write in British English.");
+    expect(prompt).toContain("at most 280 characters"); // platform rules still present
+  });
+
+  it("drops the global prompt when a target replaces the guidance", () => {
+    const provider = new ConfigPromptProvider();
+    const prompt = provider.build({
+      input,
+      platform: "x",
+      target: { platform: "x", account: "main", prompt: { mode: "replace", text: "Only this." } },
+      config: { globalPrompt: "Always write in British English." },
+    });
+    expect(prompt).toContain("Only this.");
+    expect(prompt).not.toContain("British English");
+  });
+
   it("uses a configured layer-3 override when no CLI override is given", () => {
     const provider = new ConfigPromptProvider();
     const prompt = provider.build({

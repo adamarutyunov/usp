@@ -1,63 +1,33 @@
 import { writeProjectConfig } from "../config/config.js";
 import type { UspConfig } from "../types.js";
 
+// A minimal nested starter. Credentials are NOT stored here — `usp setup` writes them under
+// ~/.config/usp/social-auth, or supply them via environment variables. Accounts hold targets;
+// a target is a concrete destination (a subreddit, a Telegram chat) plus an optional prompt.
 export const SAMPLE_CONFIG: UspConfig = {
   llm: {
     provider: "gemini",
     model: "gemini-2.5-flash-lite",
   },
-  profiles: {
-    default: {
-      targets: [
-        "x-main",
-        "linkedin-me",
-        "reddit-release",
-        "telegram-channel",
-        "aegea-blog",
-        "bluesky-main",
-        "mastodon-main",
-        "discord-main",
-        "threads-main",
-      ],
+  accounts: {
+    x: {
+      main: {
+        targets: {
+          default: {},
+        },
+      },
+    },
+    telegram: {
+      main: {
+        targets: {
+          news: { chatId: "@your_channel" },
+        },
+      },
     },
   },
-  targets: {
-    "x-main": {
-      platform: "x",
-      account: "main",
-    },
-    "linkedin-me": {
-      platform: "linkedin",
-      account: "me",
-    },
-    "reddit-release": {
-      platform: "reddit",
-      account: "main",
-      subreddit: "reddit_api_test",
-    },
-    "telegram-channel": {
-      platform: "telegram",
-      account: "main",
-    },
-    "aegea-blog": {
-      platform: "aegea",
-      account: "main",
-    },
-    "bluesky-main": {
-      platform: "bluesky",
-      account: "main",
-    },
-    "mastodon-main": {
-      platform: "mastodon",
-      account: "main",
-    },
-    "discord-main": {
-      platform: "discord",
-      account: "main",
-    },
-    "threads-main": {
-      platform: "threads",
-      account: "main",
+  profiles: {
+    default: {
+      targets: ["x/main/default", "telegram/main/news"],
     },
   },
 };

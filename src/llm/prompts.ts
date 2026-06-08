@@ -1,7 +1,7 @@
 import type { MarkdownInput, Platform, PromptLayer, TargetConfig } from "../types.js";
 
-// Layer 1 — the task and the quality bar. Always applied, never shown in the UI.
-const BASE_GUIDANCE = [
+// Layer 1 — the task and the quality bar. Always applied; shown read-only in the global-prompt editor.
+export const BASE_GUIDANCE = [
   "Turn the source into copy that is ready to post on social media.",
   "Stay faithful to it: no invented facts, no hype, no emojis unless the source already uses them.",
   "Be concrete and useful. Never mention that the source was Markdown.",
@@ -56,19 +56,35 @@ export const DEFAULT_PLATFORM_PROMPTS: Record<Platform, string> = {
 };
 
 /**
- * Compose the guidance the model sees, per the override mode:
- * - none/append: layer 1 + layer 2 (+ layer 3 when appending)
- * - replace: layer 3 only
+ * Compose the guidance the model sees from up to three layers:
+ * - Layer 1: base guidance (hidden, always on unless a target override replaces it).
+ * - Layer 2: per-platform rules, optionally amended by a platform-level override.
+ * - Layer 3: a target-level override (append after 1 + 2, or replace everything).
  * The output contract is added separately and always applies.
  */
-export function composeGuidance(platform: Platform, override?: PromptLayer) {
-  const text = override?.text?.trim();
-  if (text && override?.mode === "replace") {
-    return text;
+export function composeGuidance(
+  platform: Platform,
+  options: { globalAppend?: string; platformOverride?: PromptLayer; targetOverride?: PromptLayer } = {}
+) {
+  const { globalAppend, platformOverride, targetOverride } = options;
+  const targetText = targetOverride?.text?.trim();
+  if (targetText && targetOverride?.mode === "replace") {
+    return targetText;
   }
-  const layers = [BASE_GUIDANCE, DEFAULT_PLATFORM_PROMPTS[platform]];
-  if (text) {
-    layers.push(text);
+
+  let platformRules = DEFAULT_PLATFORM_PROMPTS[platform];
+  const platformText = platformOverride?.text?.trim();
+  if (platformText) {
+    platformRules = platformOverride?.mode === "replace" ? platformText : `${platformRules}\n\n${platformText}`;
+  }
+
+  const layers = [BASE_GUIDANCE];
+  if (globalAppend?.trim()) {
+    layers.push(globalAppend.trim());
+  }
+  layers.push(platformRules);
+  if (targetText) {
+    layers.push(targetText);
   }
   return layers.join("\n\n");
 }
@@ -77,12 +93,16 @@ export function buildPrompt({
   input,
   platform,
   target,
-  override,
+  globalAppend,
+  platformOverride,
+  targetOverride,
 }: {
   input: MarkdownInput;
   platform: Platform;
   target: TargetConfig;
-  override?: PromptLayer;
+  globalAppend?: string;
+  platformOverride?: PromptLayer;
+  targetOverride?: PromptLayer;
 }) {
   const mediaCatalog =
     input.media.length === 0
@@ -92,7 +112,7 @@ export function buildPrompt({
           .join("\n");
 
   return [
-    composeGuidance(platform, override),
+    composeGuidance(platform, { globalAppend, platformOverride, targetOverride }),
     "",
     OUTPUT_CONTRACT,
     "",

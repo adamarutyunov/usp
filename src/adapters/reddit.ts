@@ -40,8 +40,7 @@ async function getAccessToken(context: PublishContext) {
 
 export async function publishToReddit(context: PublishContext) {
   const warnings: string[] = [];
-  const account = context.config.accounts?.reddit?.[context.target.account];
-  const subreddit = context.target.subreddit || account?.subreddit;
+  const subreddit = context.target.subreddit;
   if (!subreddit) {
     throw new Error(`Reddit target "${context.targetId}" needs a subreddit.`);
   }

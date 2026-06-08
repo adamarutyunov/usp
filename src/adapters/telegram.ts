@@ -40,11 +40,9 @@ export async function publishToTelegram(context: PublishContext) {
     return dryRunResult(context);
   }
 
-  const account = context.config.accounts?.telegram?.[context.target.account];
-  const configuredChatId = context.target.chatId;
-  const chatId = configuredChatId || account?.chatId;
+  const chatId = context.target.chatId;
   if (!chatId) {
-    throw new Error(`Telegram target "${context.targetId}" needs chatId or an account default chatId.`);
+    throw new Error(`Telegram target "${context.targetId}" needs a chatId.`);
   }
   const botToken = getBotToken(context);
   const posts = [];

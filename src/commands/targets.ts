@@ -42,7 +42,7 @@ export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
     const refreshToken = optionalSecret(account.refreshToken);
     const username = optionalSecret(account.username);
     const password = optionalSecret(account.password);
-    const subreddit = target.subreddit || account.subreddit;
+    const subreddit = target.subreddit;
     return clientId && clientSecret && (refreshToken || (username && password)) && subreddit
       ? { ready: true }
       : { ready: false, reason: `missing Reddit credentials or subreddit for account "${target.account}"` };
@@ -109,7 +109,7 @@ export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
     return { ready: false, reason: `missing Telegram account "${target.account}"` };
   }
   const botToken = optionalSecret(account.botToken);
-  const chatId = target.chatId || account.chatId;
+  const chatId = target.chatId;
   return botToken && chatId
     ? { ready: true }
     : { ready: false, reason: `missing Telegram bot token or chat_id for account "${target.account}"` };

@@ -88,9 +88,9 @@ export async function buildPlatformPlan({
     input,
     platform,
     target: target.config,
-    override: target.config.prompt
-      ? { mode: "replace", text: target.config.prompt }
-      : config.prompts?.[platform],
+    globalAppend: config.globalPrompt,
+    platformOverride: config.prompts?.[platform],
+    targetOverride: target.config.prompt,
   });
   const response = await llm.generate(prompt);
   return normalizePlan(platform, parseJsonObject(response), mediaIds);

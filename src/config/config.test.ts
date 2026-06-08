@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import { applyEnvFallbacks, loadConfig, writeSocialAuthConfig } from "./config.js";
+import { applyEnvFallbacks, loadConfig, migrateFlatConfig, normalizeTargets, remapIdsInPlace, writeSocialAuthConfig } from "./config.js";
 
 describe("social auth config", () => {
   it("loads social auth files from ~/.config/usp/social-auth", async () => {
@@ -136,5 +136,99 @@ describe("applyEnvFallbacks", () => {
       targets: { "discord-main": { platform: "discord", account: "main" } },
     });
     expect(config.accounts?.discord?.main?.webhookUrl).toBe("https://hook");
+  });
+
+  it("prefers an account-scoped env var over the platform-wide one", () => {
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "platform-wide");
+    vi.stubEnv("TELEGRAM_NEWSBOT_BOT_TOKEN", "account-scoped");
+    try {
+      const config = applyEnvFallbacks({
+        accounts: { telegram: { newsbot: {}, other: {} } },
+      });
+      expect(config.accounts?.telegram?.newsbot?.botToken).toBe("account-scoped");
+      expect(config.accounts?.telegram?.other?.botToken).toBe("platform-wide");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("normalizeTargets", () => {
+  it("flattens nested account targets, strips the targets key, and adds a default", () => {
+    const config = normalizeTargets({
+      accounts: {
+        telegram: {
+          newsbot: {
+            botToken: "t",
+            targets: {
+              en: { chatId: "@news" },
+              ru: { chatId: "@news_ru", prompt: { mode: "append", text: "In Russian." } },
+            },
+          },
+        },
+        x: { main: { accessToken: "a" } }, // no targets -> default
+      },
+    });
+
+    expect(Object.keys(config.targets ?? {}).sort()).toEqual([
+      "telegram/newsbot/en",
+      "telegram/newsbot/ru",
+      "x/main/default",
+    ]);
+    expect(config.targets?.["telegram/newsbot/en"]).toEqual({
+      platform: "telegram",
+      account: "newsbot",
+      chatId: "@news",
+    });
+    expect(config.targets?.["telegram/newsbot/ru"]?.prompt).toEqual({ mode: "append", text: "In Russian." });
+    expect(config.targets?.["x/main/default"]).toEqual({ platform: "x", account: "main" });
+    // The targets key is removed from the auth object.
+    expect((config.accounts?.telegram?.newsbot as { targets?: unknown }).targets).toBeUndefined();
+  });
+
+  it("keeps existing flat targets and does not double-create defaults for them", () => {
+    const config = normalizeTargets({
+      accounts: { x: { main: { accessToken: "a" } } },
+      targets: { "x-main": { platform: "x", account: "main" } },
+    });
+    expect(Object.keys(config.targets ?? {})).toEqual(["x-main"]);
+  });
+});
+
+describe("migrateFlatConfig", () => {
+  it("nests flat targets and remaps profiles and postingDefaults", () => {
+    const { config, idMap } = migrateFlatConfig({
+      profiles: { default: { targets: ["x-main", "reddit-release"] } },
+      postingDefaults: { "x-main": "llm", "reddit-release": "off" },
+      targets: {
+        "x-main": { platform: "x", account: "main" },
+        "reddit-release": { platform: "reddit", account: "main", subreddit: "reddit_api_test" },
+      },
+    });
+
+    expect(idMap).toEqual({ "x-main": "x/main/default", "reddit-release": "reddit/main/default" });
+    expect(config.targets).toBeUndefined();
+    expect(config.accounts?.x?.main).toEqual({ targets: { default: {} } });
+    expect(config.accounts?.reddit?.main).toEqual({ targets: { default: { subreddit: "reddit_api_test" } } });
+    expect(config.profiles?.default.targets).toEqual(["x/main/default", "reddit/main/default"]);
+    expect(config.postingDefaults).toEqual({ "x/main/default": "llm", "reddit/main/default": "off" });
+  });
+
+  it("converts a legacy string prompt to a replace override and disambiguates name clashes", () => {
+    const { config, idMap } = migrateFlatConfig({
+      targets: {
+        "x-a": { platform: "x", account: "main", prompt: "Only this." },
+        "x-b": { platform: "x", account: "main" },
+      },
+    });
+    expect(config.accounts?.x?.main?.targets?.default).toEqual({ prompt: { mode: "replace", text: "Only this." } });
+    // Second target on the same account can't be "default" too.
+    expect(idMap["x-b"]).toBe("x/main/x-b");
+  });
+
+  it("remaps a separate config's ids with an external id map", () => {
+    const global = { postingDefaults: { "x-main": "llm" as const } };
+    remapIdsInPlace(global, { "x-main": "x/main/default" });
+    expect(global.postingDefaults).toEqual({ "x/main/default": "llm" });
   });
 });

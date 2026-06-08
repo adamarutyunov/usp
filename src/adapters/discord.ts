@@ -111,7 +111,7 @@ export async function publishToDiscord(context: PublishContext) {
   }
 
   const webhookUrl = resolveSecret(account.webhookUrl, "Discord webhook URL");
-  const threadId = context.target.threadId || account.threadId;
+  const threadId = context.target.threadId;
   const posts = [];
 
   for (const unit of context.plan.units) {

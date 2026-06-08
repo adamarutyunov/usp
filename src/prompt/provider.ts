@@ -42,24 +42,24 @@ export class ConfigPromptProvider extends PromptProvider {
   }
 
   build(request: PromptRequest): string {
-    const platform = request.platform;
     return buildPrompt({
       input: request.input,
-      platform,
+      platform: request.platform,
       target: request.target,
-      override: this.resolveOverride(request),
+      // Layer 1 addition: user's global rules.
+      globalAppend: request.config.globalPrompt,
+      // Layer 2 amendment: a platform-level override from config.
+      platformOverride: request.config.prompts?.[request.platform],
+      // Layer 3: a CLI --prompt (this run) wins over the target's own prompt.
+      targetOverride: this.resolveTargetOverride(request),
     });
   }
 
-  // Layer 3 precedence: CLI --prompt > per-target prompt > configured prompt.
-  private resolveOverride(request: PromptRequest): PromptLayer | undefined {
+  private resolveTargetOverride(request: PromptRequest): PromptLayer | undefined {
     const cli = this.overrides.get(request.platform);
     if (cli) {
       return { mode: cli.mode, text: cli.text };
     }
-    if (request.target.prompt) {
-      return { mode: "replace", text: request.target.prompt };
-    }
-    return request.config.prompts?.[request.platform];
+    return request.target.prompt;
   }
 }
