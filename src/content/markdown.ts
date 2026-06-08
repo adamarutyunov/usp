@@ -1,4 +1,6 @@
+import dns from "node:dns/promises";
 import fs from "node:fs/promises";
+import net from "node:net";
 import path from "node:path";
 
 import mime from "mime";
@@ -8,6 +10,8 @@ import { fetchWithTimeout } from "../util/http.js";
 const IMAGE_PATTERN = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 const REMOTE_IMAGE_TIMEOUT_MS = 30_000;
 const MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_MEDIA_LOAD_CONCURRENCY = 4;
+const MAX_REMOTE_REDIRECTS = 5;
 
 function isRemotePath(value: string) {
   return /^https?:\/\//i.test(value);
@@ -15,30 +19,42 @@ function isRemotePath(value: string) {
 
 /**
  * Reject obvious SSRF targets (loopback, link-local, private ranges, cloud metadata)
- * before fetching a remote image. This is a best-effort literal-host check — it does
- * not resolve DNS, so a hostname pointing at a private IP can still slip through; it
- * exists to stop the common `![x](http://169.254.169.254/...)` style of abuse when the
- * Markdown comes from an untrusted source.
+ * before fetching a remote image. Hostnames are resolved before every request and
+ * redirect target so a public-looking name cannot resolve to a private address.
  */
-function assertFetchableHost(url: string) {
-  let host: string;
+async function assertFetchableUrl(url: string) {
+  let parsed: URL;
   try {
-    host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    parsed = new URL(url);
   } catch {
     throw new Error(`Invalid remote image URL: ${url}`);
   }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Unsupported remote image URL protocol: ${parsed.protocol}`);
+  }
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const addresses = net.isIP(host) ? [{ address: host }] : await dns.lookup(host, { all: true, verbatim: true });
+  if (addresses.length === 0) {
+    throw new Error(`Remote image host did not resolve: ${host}`);
+  }
+  for (const { address } of addresses) {
+    assertPublicAddress(host, address);
+  }
+}
+
+function assertPublicAddress(host: string, address: string) {
   const blocked =
     host === "localhost" ||
     host.endsWith(".localhost") ||
-    host === "0.0.0.0" ||
-    host === "::1" ||
-    /^127\./.test(host) ||
-    /^10\./.test(host) ||
-    /^192\.168\./.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-    /^169\.254\./.test(host) ||
-    /^fe80:/i.test(host) ||
-    /^f[cd][0-9a-f]{2}:/i.test(host);
+    address === "0.0.0.0" ||
+    address === "::1" ||
+    /^127\./.test(address) ||
+    /^10\./.test(address) ||
+    /^192\.168\./.test(address) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(address) ||
+    /^169\.254\./.test(address) ||
+    /^fe80:/i.test(address) ||
+    /^f[cd][0-9a-f]{2}:/i.test(address);
   if (blocked) {
     throw new Error(`Refusing to fetch remote image from a private or link-local host: ${host}`);
   }
@@ -51,8 +67,7 @@ function inferTitle(markdown: string) {
 
 async function loadMedia(media: SourceMedia) {
   if (media.isRemote) {
-    assertFetchableHost(media.resolvedPath);
-    const response = await fetchWithTimeout(media.resolvedPath, {}, { timeoutMs: REMOTE_IMAGE_TIMEOUT_MS });
+    const response = await fetchRemoteImage(media.resolvedPath);
     if (!response.ok) {
       throw new Error(`Failed to load remote image ${media.resolvedPath} (${response.status}).`);
     }
@@ -83,6 +98,45 @@ async function loadMedia(media: SourceMedia) {
     size: data.byteLength,
     mime: mime.getType(media.resolvedPath) ?? "application/octet-stream",
   };
+}
+
+async function fetchRemoteImage(url: string) {
+  let current = url;
+  for (let redirects = 0; redirects <= MAX_REMOTE_REDIRECTS; redirects += 1) {
+    await assertFetchableUrl(current);
+    const response = await fetchWithTimeout(
+      current,
+      { redirect: "manual" },
+      { timeoutMs: REMOTE_IMAGE_TIMEOUT_MS }
+    );
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      return response;
+    }
+    const location = response.headers.get("location");
+    if (!location) {
+      return response;
+    }
+    current = new URL(location, current).toString();
+  }
+  throw new Error(`Remote image exceeded ${MAX_REMOTE_REDIRECTS} redirects: ${url}`);
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await fn(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 async function parseMarkdownInput({
@@ -119,7 +173,7 @@ async function parseMarkdownInput({
     title: inferTitle(body),
     body,
     bodyWithMediaPlaceholders,
-    media: await Promise.all(media.map(loadMedia)),
+    media: await mapWithConcurrency(media, MAX_MEDIA_LOAD_CONCURRENCY, loadMedia),
   };
 }
 

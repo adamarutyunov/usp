@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { PLATFORMS } from "../platforms.js";
 import type { MarkdownInput, Platform, PromptLayer, TargetConfig } from "../types.js";
 
 // Prompt text lives in ./prompts/*.md (copied to dist on build), read once at load.
@@ -10,8 +11,6 @@ const PROMPTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "pro
 function readPrompt(...segments: string[]): string {
   return fs.readFileSync(path.join(PROMPTS_DIR, ...segments), "utf8").trim();
 }
-
-const PLATFORMS: Platform[] = ["x", "linkedin", "reddit", "telegram", "aegea", "bluesky", "mastodon", "discord", "threads"];
 
 // Platforms whose posts are split into a hard-limited thread; they share the thread rules.
 const THREAD_PLATFORMS = new Set<Platform>(["x", "bluesky", "mastodon", "threads"]);

@@ -1,4 +1,5 @@
 import { loadSocialAuthConfig, writeSocialAuthConfig } from "../config/config.js";
+import { isPlatform } from "../platforms.js";
 import type { Platform, UspConfig } from "../types.js";
 import { setDeepValue } from "../util/object.js";
 
@@ -15,7 +16,7 @@ export async function accountSetCommand(
   name: string,
   options: { value?: string[] }
 ) {
-  if (!["x", "linkedin", "reddit", "telegram", "aegea", "bluesky", "mastodon", "discord", "threads"].includes(platform)) {
+  if (!isPlatform(platform)) {
     throw new Error(`Unsupported platform: ${platform}`);
   }
 

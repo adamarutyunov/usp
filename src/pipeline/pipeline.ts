@@ -1,5 +1,5 @@
 import type { Platform, PlatformPlan, PublishPlan, PublishTargetResult, TargetConfig, UspConfig } from "../types.js";
-import type { PreviewStore } from "../preview/store.js";
+import type { PreviewFingerprint, PreviewStore } from "../preview/store.js";
 import { PartialPublishError } from "../adapters/common.js";
 import {
   InputSource,
@@ -45,6 +45,7 @@ async function mapWithConcurrency<T, R>(
 export type PreviewPublishOptions = {
   store: PreviewStore;
   previewOnly: boolean;
+  fingerprint?: PreviewFingerprint;
   onExistingDirectory?: (dir: string) => Promise<"reuse" | "regenerate">;
 };
 
@@ -128,19 +129,16 @@ export class PublishPipeline {
   }) {
     const input = await this.inputSource.read();
     const plan = createEmptyPlan(input);
-    const plannedPlatforms = new Set<Platform>();
 
     for (const target of targets) {
       const platform = target.config.platform;
-      if (plannedPlatforms.has(platform)) {
-        continue;
-      }
 
       hooks.onPrepareStart?.(target);
       try {
-        plan.platforms[platform] = await this.planner.plan({ input, target, config });
-        plannedPlatforms.add(platform);
-        hooks.onPrepareSuccess?.(target, plan.platforms[platform]!);
+        const platformPlan = await this.planner.plan({ input, target, config });
+        plan.targets![target.id] = platformPlan;
+        plan.platforms[platform] ??= platformPlan;
+        hooks.onPrepareSuccess?.(target, platformPlan);
       } catch (error) {
         hooks.onPrepareError?.(target, error);
       }
@@ -164,7 +162,7 @@ export class PublishPipeline {
   }): Promise<PipelineRunResult> {
     const input = await this.inputSource.read();
     const basePlan = createEmptyPlan(input);
-    const previewSession = preview?.store.open(input);
+    const previewSession = preview?.store.open(input, { fingerprint: preview.fingerprint });
     const previewDir = previewSession?.dir;
     const previewExists = previewSession ? await previewSession.exists() : false;
     const previewActive = Boolean(previewSession && preview && (preview.previewOnly || previewExists));

@@ -1,81 +1,60 @@
 llm:
   provider: anthropic
   model: claude-sonnet-4-5
-  apiKeyEnv: ANTHROPIC_API_KEY
-profiles:
-  default:
-    targets:
-      - x-main
-      - linkedin-me
-      - reddit-release
-      - telegram-channel
-      - aegea-blog
-      - bluesky-main
-      - mastodon-main
-      - discord-main
-targets:
-  x-main:
-    platform: x
-    account: main
-  linkedin-me:
-    platform: linkedin
-    account: me
-  reddit-release:
-    platform: reddit
-    account: main
-    subreddit: reddit_api_test
-  telegram-channel:
-    platform: telegram
-    account: main
-    chatId: "@sejqlkneljkwrbe"
-  aegea-blog:
-    platform: aegea
-    account: main
-  bluesky-main:
-    platform: bluesky
-    account: main
-  mastodon-main:
-    platform: mastodon
-    account: main
-  discord-main:
-    platform: discord
-    account: main
+
 accounts:
   x:
     main:
-      consumerKeyEnv: X_CONSUMER_KEY
-      consumerSecretEnv: X_CONSUMER_SECRET
-      accessTokenEnv: X_ACCESS_TOKEN
-      accessTokenSecretEnv: X_ACCESS_TOKEN_SECRET
+      targets:
+        default: {}
   linkedin:
     me:
-      accessTokenEnv: LINKEDIN_ACCESS_TOKEN
       author: urn:li:person:YOUR_PERSON_ID
+      targets:
+        default: {}
   reddit:
     main:
-      clientIdEnv: REDDIT_CLIENT_ID
-      clientSecretEnv: REDDIT_CLIENT_SECRET
-      refreshTokenEnv: REDDIT_REFRESH_TOKEN
       userAgent: usp/0.1.0 by YOUR_REDDIT_USERNAME
+      targets:
+        release:
+          subreddit: reddit_api_test
   telegram:
     main:
-      botTokenEnv: TELEGRAM_BOT_TOKEN
+      targets:
+        channel:
+          chatId: "@sejqlkneljkwrbe"
   aegea:
     main:
       baseUrl: http://localhost/
-      passwordEnv: AEGEA_PASSWORD
+      targets:
+        blog: {}
   bluesky:
     main:
-      identifierEnv: BLUESKY_IDENTIFIER
-      appPasswordEnv: BLUESKY_APP_PASSWORD
       pdsUrl: https://bsky.social
+      targets:
+        default: {}
   mastodon:
     main:
       instanceUrl: https://mastodon.social
-      accessTokenEnv: MASTODON_ACCESS_TOKEN
       visibility: public
+      targets:
+        default: {}
   discord:
     main:
-      webhookUrlEnv: DISCORD_WEBHOOK_URL
       username: Ultimate Social Poster
+      targets:
+        default: {}
+
+profiles:
+  default:
+    targets:
+      - x/main/default
+      - linkedin/me/default
+      - reddit/main/release
+      - telegram/main/channel
+      - aegea/main/blog
+      - bluesky/main/default
+      - mastodon/main/default
+      - discord/main/default
+
 prompts: {}

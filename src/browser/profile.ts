@@ -2,23 +2,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { getBrowserAuthDir } from "../config/config.js";
+import { PLATFORM_METADATA, PLATFORMS } from "../platforms.js";
 import type { Platform } from "../types.js";
 
 export type BrowserKind = "chromium" | "chrome" | "msedge";
 
 export const DEFAULT_BROWSER: BrowserKind = "chrome";
 
-export const DEFAULT_BROWSER_ACCOUNTS: Record<Platform, string> = {
-  x: "main",
-  linkedin: "me",
-  reddit: "main",
-  telegram: "main",
-  aegea: "main",
-  bluesky: "main",
-  mastodon: "main",
-  discord: "main",
-  threads: "main",
-};
+export const DEFAULT_BROWSER_ACCOUNTS = Object.fromEntries(
+  PLATFORMS.map((platform) => [platform, PLATFORM_METADATA[platform].defaultAccount])
+) as Record<Platform, string>;
 
 export const LOGIN_URLS: Record<Platform, string> = {
   x: "https://x.com/home",

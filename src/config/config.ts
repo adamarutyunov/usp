@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import YAML from "yaml";
+import { PLATFORM_METADATA } from "../platforms.js";
 import type { JsonObject, LlmProvider, Platform, PostMode, PromptLayer, TargetConfig, TargetRouting, UspConfig } from "../types.js";
 import { deepMerge, setDeepValue } from "../util/object.js";
 
@@ -14,17 +15,9 @@ export const DEFAULT_CONFIG_NAMES = ["usp.config.yml", ".usp.yml"];
 // reddit `subreddit`, discord `threadId`) are deliberately excluded: an account may
 // have many targets, so a single `PLATFORM_FIELD` env var cannot address them — set
 // routing in the config/`.usp.yml` instead.
-const ACCOUNT_ENV_FIELDS: Record<Platform, string[]> = {
-  x: ["consumerKey", "consumerSecret", "accessToken", "accessTokenSecret"],
-  linkedin: ["accessToken", "author", "version"],
-  reddit: ["clientId", "clientSecret", "refreshToken", "username", "password", "userAgent"],
-  telegram: ["botToken"],
-  aegea: ["baseUrl", "password"],
-  bluesky: ["identifier", "appPassword", "pdsUrl"],
-  mastodon: ["instanceUrl", "accessToken", "visibility"],
-  discord: ["webhookUrl", "username", "avatarUrl"],
-  threads: ["accessToken", "userId", "username", "replyControl"],
-};
+const ACCOUNT_ENV_FIELDS: Record<Platform, string[]> = Object.fromEntries(
+  Object.entries(PLATFORM_METADATA).map(([platform, metadata]) => [platform, metadata.accountEnvFields])
+) as Record<Platform, string[]>;
 
 export function getGlobalConfigPath() {
   return path.join(os.homedir(), ".config", "usp", "config.yml");
@@ -274,7 +267,15 @@ export async function loadConfig(options: {
     : await findProjectConfig(cwd);
   const projectConfig = projectPath ? await readYamlIfExists(projectPath) : {};
 
-  let merged = deepMerge(deepMerge(globalConfig, projectConfig), socialAuthConfig);
+  const migratedGlobal = migrateFlatConfig(globalConfig as UspConfig);
+  const migratedProject = migrateFlatConfig(projectConfig as UspConfig);
+  const migratedSocialAuth = migrateFlatConfig(socialAuthConfig as UspConfig);
+
+  remapIdsInPlace(migratedGlobal.config, migratedProject.idMap);
+  remapIdsInPlace(migratedGlobal.config, migratedSocialAuth.idMap);
+  remapIdsInPlace(migratedProject.config, migratedSocialAuth.idMap);
+
+  let merged = deepMerge(deepMerge(migratedGlobal.config, migratedProject.config), migratedSocialAuth.config);
   for (const override of options.overrides ?? []) {
     const [key, ...rest] = override.split("=");
     if (!key || rest.length === 0) {

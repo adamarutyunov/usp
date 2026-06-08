@@ -120,6 +120,32 @@ describe("PublishPipeline preview support", () => {
     expect(result.results.map((item) => item.posts[0]?.text)).toEqual(["cached x-main", "generated x-alt"]);
     await expect(fs.readdir(result.previewDir!)).resolves.toEqual(["x-alt-x-alt.json", "x-main-x-main.json"]);
   });
+
+  it("does not reuse previews when the planning fingerprint changes", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "usp-preview-"));
+    const target = { id: "x-main", config: { platform: "x" as const, account: "main" } };
+    const staleStore = new PreviewStore(dir);
+    await staleStore.open(input(), { fingerprint: () => "old" }).write(target, { units: [{ text: "stale" }] });
+
+    const planner = new RecordingPlanner();
+    const poster = new RecordingPoster();
+    const pipeline = new PublishPipeline(new StaticInputSource(input()), planner, poster);
+
+    const result = await pipeline.publish({
+      config,
+      targets: [target],
+      dryRun: true,
+      preview: {
+        store: new PreviewStore(dir),
+        previewOnly: false,
+        fingerprint: () => "new",
+        onExistingDirectory: async () => "reuse",
+      },
+    });
+
+    expect(planner.calls).toEqual(["x-main"]);
+    expect(result.results[0]?.posts[0]?.text).toBe("generated x-main");
+  });
 });
 
 describe("PublishPipeline mode handling (no preview)", () => {
@@ -157,5 +183,22 @@ describe("PublishPipeline mode handling (no preview)", () => {
 
     expect(planner.calls).toEqual(["x:llm"]);
     expect(result.results.map((item) => item.posts[0]?.text)).toEqual(["x:llm", "x:llm"]);
+  });
+
+  it("planOnly plans every target so target-specific prompts are preserved", async () => {
+    const planner = new RecordingPlanner();
+    const pipeline = new PublishPipeline(new StaticInputSource(input()), planner, new RecordingPoster());
+
+    const result = await pipeline.planOnly({
+      config,
+      targets: [
+        { id: "x-main", config: { platform: "x", account: "main" } },
+        { id: "x-alt", config: { platform: "x", account: "alt", prompt: { mode: "append", text: "Alt." } } },
+      ],
+    });
+
+    expect(planner.calls).toEqual(["x-main", "x-alt"]);
+    expect(Object.keys(result.plan.targets ?? {}).sort()).toEqual(["x-alt", "x-main"]);
+    expect(result.plan.platforms.x?.units[0]?.text).toBe("generated x-main");
   });
 });

@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 import { cancel, confirm, isCancel, select } from "@clack/prompts";
 import { loadConfig, loadGlobalConfig, writeGlobalConfig } from "../config/config.js";
 import { MarkdownFileInputSource, MarkdownTextInputSource, StdinMarkdownInputSource } from "../input/markdown-source.js";
@@ -131,6 +133,28 @@ function createHumanHooks() {
   };
 }
 
+function previewFingerprint(config: Awaited<ReturnType<typeof loadConfig>>, options: PublishOptions) {
+  const promptOverrides = options.prompt ?? [];
+  return (target: TargetRef) =>
+    crypto
+      .createHash("sha256")
+      .update(
+        JSON.stringify({
+          version: 1,
+          llm: {
+            provider: config.llm?.provider,
+            model: config.llm?.model,
+          },
+          globalPrompt: config.globalPrompt,
+          platformPrompt: config.prompts?.[target.config.platform],
+          target: target.config,
+          postMode: target.postMode ?? "llm",
+          promptOverrides,
+        })
+      )
+      .digest("hex");
+}
+
 export async function planCommand(
   file: string | undefined,
   options: {
@@ -257,6 +281,7 @@ async function runPublishFlow(
     preview: {
       store: previewStore,
       previewOnly: mode === "preview",
+      fingerprint: previewFingerprint(config, options),
       async onExistingDirectory(dir) {
         return assertNotCancel(
           await select({

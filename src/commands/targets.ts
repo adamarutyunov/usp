@@ -1,12 +1,15 @@
-import type { PostMode, TargetConfig, UspConfig } from "../types.js";
+import type { Platform, PostMode, TargetConfig, UspConfig } from "../types.js";
 import { optionalSecret } from "../util/secrets.js";
+
+type Readiness = { ready: true } | { ready: false; reason: string };
+type ReadinessCheck = (config: UspConfig, target: TargetConfig) => Readiness;
 
 function hasValue(value: unknown) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
-  if (target.platform === "x") {
+const READINESS: Record<Platform, ReadinessCheck> = {
+  x(config, target) {
     const account = config.accounts?.x?.[target.account];
     if (!account) {
       return { ready: false, reason: `missing X account "${target.account}"` };
@@ -19,9 +22,9 @@ export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
     return hasOAuth1
       ? { ready: true }
       : { ready: false, reason: `missing X credentials for account "${target.account}"` };
-  }
+  },
 
-  if (target.platform === "linkedin") {
+  linkedin(config, target) {
     const account = config.accounts?.linkedin?.[target.account];
     if (!account) {
       return { ready: false, reason: `missing LinkedIn account "${target.account}"` };
@@ -30,9 +33,9 @@ export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
     return token && hasValue(account.author)
       ? { ready: true }
       : { ready: false, reason: `missing LinkedIn access token or author for account "${target.account}"` };
-  }
+  },
 
-  if (target.platform === "reddit") {
+  reddit(config, target) {
     const account = config.accounts?.reddit?.[target.account];
     if (!account) {
       return { ready: false, reason: `missing Reddit account "${target.account}"` };
@@ -46,9 +49,9 @@ export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
     return clientId && clientSecret && (refreshToken || (username && password)) && subreddit
       ? { ready: true }
       : { ready: false, reason: `missing Reddit credentials or subreddit for account "${target.account}"` };
-  }
+  },
 
-  if (target.platform === "aegea") {
+  aegea(config, target) {
     const account = config.accounts?.aegea?.[target.account];
     if (!account) {
       return { ready: false, reason: `missing Aegea account "${target.account}"` };
@@ -57,9 +60,9 @@ export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
     return password && hasValue(account.baseUrl)
       ? { ready: true }
       : { ready: false, reason: `missing Aegea baseUrl or password for account "${target.account}"` };
-  }
+  },
 
-  if (target.platform === "bluesky") {
+  bluesky(config, target) {
     const account = config.accounts?.bluesky?.[target.account];
     if (!account) {
       return { ready: false, reason: `missing Bluesky account "${target.account}"` };
@@ -69,9 +72,9 @@ export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
     return identifier && appPassword
       ? { ready: true }
       : { ready: false, reason: `missing Bluesky identifier or app password for account "${target.account}"` };
-  }
+  },
 
-  if (target.platform === "mastodon") {
+  mastodon(config, target) {
     const account = config.accounts?.mastodon?.[target.account];
     if (!account) {
       return { ready: false, reason: `missing Mastodon account "${target.account}"` };
@@ -80,9 +83,9 @@ export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
     return accessToken && hasValue(account.instanceUrl)
       ? { ready: true }
       : { ready: false, reason: `missing Mastodon instance URL or access token for account "${target.account}"` };
-  }
+  },
 
-  if (target.platform === "discord") {
+  discord(config, target) {
     const account = config.accounts?.discord?.[target.account];
     if (!account) {
       return { ready: false, reason: `missing Discord account "${target.account}"` };
@@ -91,9 +94,9 @@ export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
     return webhookUrl
       ? { ready: true }
       : { ready: false, reason: `missing Discord webhook URL for account "${target.account}"` };
-  }
+  },
 
-  if (target.platform === "threads") {
+  threads(config, target) {
     const account = config.accounts?.threads?.[target.account];
     if (!account) {
       return { ready: false, reason: `missing Threads account "${target.account}"` };
@@ -102,17 +105,23 @@ export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
     return accessToken
       ? { ready: true }
       : { ready: false, reason: `missing Threads access token for account "${target.account}"` };
-  }
+  },
 
-  const account = config.accounts?.telegram?.[target.account];
-  if (!account) {
-    return { ready: false, reason: `missing Telegram account "${target.account}"` };
-  }
-  const botToken = optionalSecret(account.botToken);
-  const chatId = target.chatId;
-  return botToken && chatId
-    ? { ready: true }
-    : { ready: false, reason: `missing Telegram bot token or chat_id for account "${target.account}"` };
+  telegram(config, target) {
+    const account = config.accounts?.telegram?.[target.account];
+    if (!account) {
+      return { ready: false, reason: `missing Telegram account "${target.account}"` };
+    }
+    const botToken = optionalSecret(account.botToken);
+    const chatId = target.chatId;
+    return botToken && chatId
+      ? { ready: true }
+      : { ready: false, reason: `missing Telegram bot token or chat_id for account "${target.account}"` };
+  },
+};
+
+export function getTargetReadiness(config: UspConfig, target: TargetConfig) {
+  return READINESS[target.platform](config, target);
 }
 
 export function resolveTargets(config: UspConfig, options: { profile?: string; targets?: string[] }) {

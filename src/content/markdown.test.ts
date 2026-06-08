@@ -33,4 +33,10 @@ describe("readMarkdownInput", () => {
     expect(input.title).toBe("Direct");
     expect(input.body).toContain("Body");
   });
+
+  it("rejects private remote image hosts", async () => {
+    await expect(
+      readMarkdownText("![private](http://127.0.0.1/image.png)", "<text>", process.cwd())
+    ).rejects.toThrow("private or link-local host");
+  });
 });

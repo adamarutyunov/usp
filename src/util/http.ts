@@ -49,7 +49,9 @@ export async function fetchWithTimeout(
   const rateLimitRetries = options.rateLimitRetries ?? DEFAULT_RATE_LIMIT_RETRIES;
 
   for (let attempt = 0; ; attempt += 1) {
-    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const signal = init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
+    const response = await fetch(url, { ...init, signal });
     if (response.status !== 429 || attempt >= rateLimitRetries) {
       return response;
     }

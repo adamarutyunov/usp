@@ -1,8 +1,7 @@
 import { loadConfig } from "../config/config.js";
+import { PLATFORMS } from "../platforms.js";
 import type { Platform, UspConfig } from "../types.js";
 import { platformName } from "../util/display.js";
-
-const PLATFORMS: Platform[] = ["x", "linkedin", "reddit", "telegram", "aegea", "bluesky", "mastodon", "discord", "threads"];
 
 function accountLabel(platform: Platform, account: Record<string, unknown>) {
   if (platform === "linkedin" && typeof account.author === "string") {

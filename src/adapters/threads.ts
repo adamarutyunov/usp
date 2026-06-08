@@ -1,4 +1,5 @@
 import type { SourceMedia, ThreadsAccount } from "../types.js";
+import { pollUntil } from "../util/async.js";
 import { fetchWithTimeout, readJsonResponse } from "../util/http.js";
 import { resolveSecret } from "../util/secrets.js";
 import {
@@ -13,8 +14,6 @@ import {
 const API_BASE = "https://graph.threads.net/v1.0";
 const CONTAINER_POLL_ATTEMPTS = 20;
 const CONTAINER_POLL_DELAY_MS = 2_000;
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 type ThreadsContainerResponse = {
   id?: string;
@@ -62,20 +61,29 @@ async function postThreads<T>(path: string, params: URLSearchParams): Promise<T>
 
 /** Poll a media container until Meta finishes ingesting the remote media; publishing before this fails. */
 async function waitForContainer(userId: string, accessToken: string, containerId: string) {
-  for (let attempt = 0; attempt < CONTAINER_POLL_ATTEMPTS; attempt += 1) {
-    const params = new URLSearchParams({ fields: "status,error_message", access_token: accessToken });
-    const response = await fetchWithTimeout(`${API_BASE}/${encodeURIComponent(containerId)}?${params.toString()}`);
-    const { ok, status, data, text } = await readJsonResponse<ThreadsStatusResponse>(response);
-    if (!ok) {
-      throw new Error(`Threads container status check failed (${status}): ${text}`);
-    }
-    if (data?.status === "FINISHED") {
-      return;
-    }
-    if (data?.status === "ERROR" || data?.status === "EXPIRED") {
-      throw new Error(`Threads media processing failed: ${data.error_message ?? data.status}`);
-    }
-    await sleep(CONTAINER_POLL_DELAY_MS);
+  const ready = await pollUntil({
+    attempts: CONTAINER_POLL_ATTEMPTS,
+    delayMs: CONTAINER_POLL_DELAY_MS,
+    async poll() {
+      const params = new URLSearchParams({ fields: "status,error_message", access_token: accessToken });
+      const response = await fetchWithTimeout(`${API_BASE}/${encodeURIComponent(containerId)}?${params.toString()}`);
+      const { ok, status, data, text } = await readJsonResponse<ThreadsStatusResponse>(response);
+      if (!ok) {
+        throw new Error(`Threads container status check failed (${status}): ${text}`);
+      }
+      return data;
+    },
+    isDone(data) {
+      return data?.status === "FINISHED";
+    },
+    onPending(data) {
+      if (data?.status === "ERROR" || data?.status === "EXPIRED") {
+        throw new Error(`Threads media processing failed: ${data.error_message ?? data.status}`);
+      }
+    },
+  });
+  if (ready?.status === "FINISHED") {
+    return;
   }
   throw new Error(`Threads container ${containerId} did not finish processing in time.`);
 }

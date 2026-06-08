@@ -6,6 +6,9 @@ import type {
   TargetConfig,
   UspConfig,
 } from "../types.js";
+import { platformLabel } from "../platforms.js";
+
+export { platformLabel };
 
 export type PublishContext = {
   targetId: string;
@@ -19,22 +22,6 @@ export type PublishContext = {
 export type PublishPost = PublishTargetResult["posts"][number];
 
 export type PlatformPublisher = (context: PublishContext) => Promise<PublishTargetResult>;
-
-const PLATFORM_LABELS: Record<Platform, string> = {
-  x: "X",
-  linkedin: "LinkedIn",
-  reddit: "Reddit",
-  telegram: "Telegram",
-  aegea: "Aegea",
-  bluesky: "Bluesky",
-  mastodon: "Mastodon",
-  discord: "Discord",
-  threads: "Threads",
-};
-
-export function platformLabel(platform: Platform) {
-  return PLATFORM_LABELS[platform];
-}
 
 /**
  * Raised when a multi-post thread fails partway through. Carries the posts that
@@ -54,7 +41,7 @@ export class PartialPublishError extends Error {
 /** Look up a per-platform account, throwing a consistent error when it is missing. */
 export function requireAccount<T>(account: T | undefined, platform: Platform, name: string): T {
   if (!account) {
-    throw new Error(`Missing ${PLATFORM_LABELS[platform]} account "${name}".`);
+    throw new Error(`Missing ${platformLabel(platform)} account "${name}".`);
   }
   return account;
 }
@@ -62,7 +49,7 @@ export function requireAccount<T>(account: T | undefined, platform: Platform, na
 /** Assert that a media item has its bytes loaded (local images), returning them. */
 export function requireMediaData(item: SourceMedia, platform: Platform): Buffer {
   if (!item.data) {
-    throw new Error(`${PLATFORM_LABELS[platform]} requires loaded local media data: ${item.resolvedPath}`);
+    throw new Error(`${platformLabel(platform)} requires loaded local media data: ${item.resolvedPath}`);
   }
   return item.data;
 }
@@ -84,7 +71,7 @@ export function publishResult(
     target: context.targetId,
     platform: context.target.platform,
     account: context.target.account,
-    dryRun: false,
+    dryRun: context.dryRun,
     posts,
     ...(warnings && warnings.length > 0 ? { warnings } : {}),
   };

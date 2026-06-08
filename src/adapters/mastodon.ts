@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import type { SourceMedia } from "../types.js";
+import { pollUntil, sleep } from "../util/async.js";
 import { fetchWithTimeout, readJsonResponse } from "../util/http.js";
 import { resolveSecret } from "../util/secrets.js";
 import {
@@ -26,8 +27,6 @@ type MastodonStatus = {
 
 const MEDIA_POLL_ATTEMPTS = 15;
 const MEDIA_POLL_MAX_DELAY_MS = 8_000;
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 function normalizeInstanceUrl(value: string | undefined) {
   if (!value) {
@@ -69,18 +68,26 @@ async function uploadMedia({
   }
 
   const mediaId = data.id;
-  for (let attempt = 0; attempt < MEDIA_POLL_ATTEMPTS; attempt += 1) {
-    await sleep(Math.min(1000 * 2 ** attempt, MEDIA_POLL_MAX_DELAY_MS));
-    const poll = await fetchWithTimeout(`${instanceUrl}/api/v1/media/${encodeURIComponent(mediaId)}`, {
-      headers: { authorization: `Bearer ${accessToken}` },
-    });
-    const polled = await readJsonResponse<MastodonMedia>(poll);
-    if (!poll.ok) {
-      throw new Error(`Mastodon media processing check failed (${poll.status}): ${polled.text}`);
-    }
-    if (polled.data?.url) {
-      return mediaId;
-    }
+  const ready = await pollUntil({
+    attempts: MEDIA_POLL_ATTEMPTS,
+    delayMs: 0,
+    async poll(attempt) {
+      await sleep(Math.min(1000 * 2 ** attempt, MEDIA_POLL_MAX_DELAY_MS));
+      const poll = await fetchWithTimeout(`${instanceUrl}/api/v1/media/${encodeURIComponent(mediaId)}`, {
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+      const polled = await readJsonResponse<MastodonMedia>(poll);
+      if (!poll.ok) {
+        throw new Error(`Mastodon media processing check failed (${poll.status}): ${polled.text}`);
+      }
+      return polled.data;
+    },
+    isDone(polled) {
+      return Boolean(polled?.url);
+    },
+  });
+  if (ready?.url) {
+    return mediaId;
   }
 
   throw new Error(`Mastodon media ${mediaId} did not finish processing in time.`);

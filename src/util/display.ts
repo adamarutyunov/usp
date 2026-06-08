@@ -1,21 +1,10 @@
 import ora from "ora";
 import pc from "yoctocolors";
+import { platformLabel } from "../platforms.js";
 import type { Platform, PlatformPlan } from "../types.js";
 
-const PLATFORM_LABELS: Record<Platform, string> = {
-  x: "X",
-  linkedin: "LinkedIn",
-  reddit: "Reddit",
-  telegram: "Telegram",
-  aegea: "Aegea",
-  bluesky: "Bluesky",
-  mastodon: "Mastodon",
-  discord: "Discord",
-  threads: "Threads",
-};
-
 export function platformName(platform: Platform) {
-  return PLATFORM_LABELS[platform];
+  return platformLabel(platform);
 }
 
 export function createSpinner(text: string) {

@@ -9,12 +9,15 @@ type PreviewTarget = {
   config: TargetConfig;
 };
 
+export type PreviewFingerprint = (target: PreviewTarget) => string;
+
 type PreviewFile = {
-  version: 1;
+  version: 2;
   source: {
     inputPath: string;
     title?: string;
   };
+  planningFingerprint: string;
   target: {
     id: string;
     platform: string;
@@ -25,7 +28,7 @@ type PreviewFile = {
 
 function sourceHash(input: MarkdownInput) {
   return crypto
-    .createHash("md5")
+    .createHash("sha256")
     .update(input.body)
     .update("\0")
     .update(input.media.map((item) => `${item.rawPath}:${item.size ?? ""}`).join("\n"))
@@ -76,7 +79,8 @@ function normalizePlan(value: unknown): PlatformPlan | undefined {
 export class PreviewSession {
   constructor(
     readonly dir: string,
-    private readonly input: MarkdownInput
+    private readonly input: MarkdownInput,
+    private readonly fingerprint: PreviewFingerprint = defaultFingerprint
   ) {}
 
   async exists() {
@@ -115,7 +119,8 @@ export class PreviewSession {
       return undefined;
     }
     if (
-      parsed.version !== 1 ||
+      parsed.version !== 2 ||
+      parsed.planningFingerprint !== this.fingerprint(target) ||
       parsed.target?.id !== target.id ||
       parsed.target.platform !== target.config.platform ||
       parsed.target.account !== target.config.account
@@ -128,11 +133,12 @@ export class PreviewSession {
   async write(target: PreviewTarget, plan: PlatformPlan) {
     await fs.mkdir(this.dir, { recursive: true });
     const file: PreviewFile = {
-      version: 1,
+      version: 2,
       source: {
         inputPath: this.input.inputPath,
         title: this.input.title,
       },
+      planningFingerprint: this.fingerprint(target),
       target: {
         id: target.id,
         platform: target.config.platform,
@@ -147,7 +153,14 @@ export class PreviewSession {
 export class PreviewStore {
   constructor(private readonly rootDir = path.resolve(process.cwd(), ".usp", "previews")) {}
 
-  open(input: MarkdownInput) {
-    return new PreviewSession(path.join(this.rootDir, sourceHash(input)), input);
+  open(input: MarkdownInput, options: { fingerprint?: PreviewFingerprint } = {}) {
+    return new PreviewSession(path.join(this.rootDir, sourceHash(input)), input, options.fingerprint);
   }
+}
+
+function defaultFingerprint(target: PreviewTarget) {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify({ id: target.id, config: target.config }))
+    .digest("hex");
 }

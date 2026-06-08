@@ -1,5 +1,6 @@
 import type { Platform, PromptLayer } from "../types.js";
 import { buildPrompt } from "../llm/prompts.js";
+import { isPlatform } from "../platforms.js";
 import { PromptProvider, type PromptRequest } from "../pipeline/contracts.js";
 
 export type PromptOverrideMode = "replace" | "append";
@@ -15,7 +16,7 @@ export function parsePromptOverride(value: string): PromptOverride {
   if (!rawPlatform || !rawModeOrText) {
     throw new Error(`Invalid --prompt "${value}". Expected platform[:append|replace]:text.`);
   }
-  if (!["x", "linkedin", "reddit", "telegram", "aegea", "bluesky", "mastodon", "discord", "threads"].includes(rawPlatform)) {
+  if (!isPlatform(rawPlatform)) {
     throw new Error(`Invalid --prompt platform "${rawPlatform}".`);
   }
   const hasExplicitMode = rawModeOrText === "append" || rawModeOrText === "replace";
@@ -25,7 +26,7 @@ export function parsePromptOverride(value: string): PromptOverride {
     throw new Error(`Invalid --prompt "${value}". Prompt text is empty.`);
   }
   return {
-    platform: rawPlatform as Platform,
+    platform: rawPlatform,
     mode,
     text: promptText,
   };

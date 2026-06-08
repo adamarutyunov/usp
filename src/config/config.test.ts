@@ -105,6 +105,35 @@ describe("social auth config", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it("migrates legacy flat targets while loading", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "usp-home-"));
+    vi.stubEnv("HOME", home);
+    await fs.writeFile(
+      path.join(home, ".usp.yml"),
+      [
+        "profiles:",
+        "  default:",
+        "    targets: [x-main]",
+        "postingDefaults:",
+        "  x-main: llm",
+        "targets:",
+        "  x-main:",
+        "    platform: x",
+        "    account: main",
+      ].join("\n")
+    );
+
+    try {
+      await expect(loadConfig({ cwd: home })).resolves.toMatchObject({
+        profiles: { default: { targets: ["x/main/default"] } },
+        postingDefaults: { "x/main/default": "llm" },
+        targets: { "x/main/default": { platform: "x", account: "main" } },
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("applyEnvFallbacks", () => {
