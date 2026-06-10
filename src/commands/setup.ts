@@ -26,7 +26,7 @@ import { SAMPLE_CONFIG } from "./init.js";
 import { pickPostTargets, type PostTargetRow } from "./post-picker.js";
 import { configureCredentials, deriveAccountName } from "./setup-credentials.js";
 import { LLM_DEFAULTS, configureLlm } from "./setup-llm.js";
-import { browseTargets, rowKey, type TreeRow } from "./target-tree.js";
+import { browseTargets, pickFromList, rowKey, type TreeRow } from "./target-tree.js";
 
 const PLATFORM_ACCOUNT_NAMES = Object.fromEntries(
   PLATFORMS.map((platform) => [platform, PLATFORM_METADATA[platform].defaultAccount])
@@ -213,7 +213,7 @@ async function editTargetPrompt(project: UspConfig, platform: Platform, accountN
   const value = orBack(
     await text({
       message: "Target prompt (added after the platform rules; leave empty to clear)",
-      defaultValue: target.prompt?.text ?? "",
+      initialValue: target.prompt?.text ?? "",
     })
   ).trim();
   if (value) {
@@ -235,12 +235,11 @@ function buildTreeRows(socialAuth: UspConfig, project: UspConfig): TreeRow[] {
     if (!accounts?.length) {
       continue;
     }
-    const platformPrompt = project.prompts?.[platform];
     rows.push({
       kind: "platform",
       platform,
       label: PLATFORM_INFO[platform].label,
-      promptBadge: platformPrompt ? `prompt: ${platformPrompt.mode}` : undefined,
+      prompt: project.prompts?.[platform],
     });
 
     const routing = ROUTING_FIELDS[platform];
@@ -263,7 +262,7 @@ function buildTreeRows(socialAuth: UspConfig, project: UspConfig): TreeRow[] {
           label: name,
           routing: destText,
           needsDestination: Boolean(routing?.required) && !destText,
-          promptBadge: target.prompt ? target.prompt.mode : undefined,
+          prompt: target.prompt,
         });
       }
     }
@@ -310,17 +309,18 @@ async function editPlatformPrompt(project: UspConfig, platform: Platform) {
 async function addAccountFlow(socialAuth: UspConfig, project: UspConfig, projectPath: string, platform?: Platform) {
   let chosen = platform;
   if (!chosen) {
-    const pick = orBack(
-      await select({
-        message: "Platform for the new account",
-        options: [
-          ...SOCIAL_PLATFORMS.map((item) => ({ value: item, label: PLATFORM_INFO[item].label, hint: PLATFORM_INFO[item].hint })),
-          { value: "back", label: "Back" },
-        ],
-      })
-    ) as Platform | "back";
-    if (pick === "back") return;
-    chosen = pick;
+    // Dim platforms that already have an account, and sort not-added first, then
+    // added — alphabetical within each group.
+    const existing = new Set(listAccounts(socialAuth, project).map((entry) => entry.platform));
+    const items = SOCIAL_PLATFORMS.map((item) => ({
+      value: item,
+      label: PLATFORM_INFO[item].label,
+      hint: PLATFORM_INFO[item].hint,
+      muted: existing.has(item),
+    })).sort((a, b) => Number(a.muted) - Number(b.muted) || a.label.localeCompare(b.label));
+    const pick = await pickFromList("Platform for the new account", items);
+    if (pick === null) return;
+    chosen = pick as Platform;
   }
 
   // Gather everything into detached objects and commit only once every prompt is answered,
@@ -379,6 +379,13 @@ async function addTargetFlow(project: UspConfig, projectPath: string, platform: 
     if (value) {
       (target as Record<string, unknown>)[routing.key] = value;
     }
+  }
+
+  const promptText = orBack(
+    await text({ message: "Target prompt (added after the platform rules; leave empty for none)", defaultValue: "" })
+  ).trim();
+  if (promptText) {
+    target.prompt = { mode: "append", text: promptText };
   }
 
   projectAccount(project, platform, accountName).targets[name] = target;

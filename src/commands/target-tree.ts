@@ -3,10 +3,10 @@ import type { Readable, Writable } from "node:stream";
 import { Prompt, isCancel } from "@clack/core";
 import pc from "yoctocolors";
 
-import type { Platform } from "../types.js";
+import type { Platform, PromptLayer } from "../types.js";
 
 export type TreeRow =
-  | { kind: "platform"; platform: Platform; label: string; promptBadge?: string }
+  | { kind: "platform"; platform: Platform; label: string; prompt?: PromptLayer }
   | { kind: "account"; platform: Platform; account: string; label: string }
   | {
       kind: "target";
@@ -16,7 +16,7 @@ export type TreeRow =
       label: string;
       routing?: string;
       needsDestination?: boolean;
-      promptBadge?: string;
+      prompt?: PromptLayer;
     }
   | { kind: "no-target"; platform: Platform; account: string }
   | { kind: "add-account" };
@@ -38,6 +38,39 @@ const LIGHT_BLUE = "125;175;255";
 // Platform headers: white, green when selected. Never bold.
 function platformLabel(label: string, focused: boolean) {
   return focused ? pc.green(label) : paint(label, WHITE);
+}
+
+const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
+
+function visibleLength(text: string) {
+  return [...text.replace(ANSI_PATTERN, "")].length;
+}
+
+function terminalWidth() {
+  const columns = process.stdout.columns;
+  return columns && columns > 0 ? columns : 80;
+}
+
+/**
+ * Prompt indicator: a half circle for append, a full circle for replace, followed by a
+ * grey preview of the human-entered prompt text, truncated to the terminal width.
+ * `head` is the already-built, visible row content the badge will follow.
+ */
+function promptBadge(prompt: PromptLayer | undefined, head: string) {
+  if (!prompt) {
+    return "";
+  }
+  const circle = prompt.mode === "replace" ? "⏺" : "◗";
+  const text = prompt.text.replace(/\s+/g, " ").trim();
+  if (!text) {
+    return `  ${pc.dim(circle)}`;
+  }
+  // Account for the "│  " frame prefix (3), the visible head, "  " + circle + " ".
+  const used = 3 + visibleLength(head) + 2 + 2;
+  const budget = Math.max(8, terminalWidth() - used - 1);
+  const codepoints = [...text];
+  const shown = codepoints.length > budget ? `${codepoints.slice(0, budget).join("")}…` : text;
+  return `  ${pc.dim(circle)} ${pc.dim(shown)}`;
 }
 
 /** Stable identity for a row, so the cursor can return to it after re-rendering the tree. */
@@ -102,8 +135,8 @@ class TargetTreePrompt extends Prompt<TreeAction> {
       return `${pointer} ${label}`;
     }
     if (row.kind === "platform") {
-      const badge = row.promptBadge ? `  ${pc.dim(row.promptBadge)}` : "";
-      return `${pointer} ${platformLabel(row.label, focused)}${badge}`;
+      const head = `${pointer} ${platformLabel(row.label, focused)}`;
+      return `${head}${promptBadge(row.prompt, head)}`;
     }
     if (row.kind === "account") {
       const label = focused ? pc.green(row.label) : paint(row.label, GREY);
@@ -119,8 +152,8 @@ class TargetTreePrompt extends Prompt<TreeAction> {
       : row.routing
         ? paint(row.routing, LIGHT_BLUE)
         : "";
-    const badge = row.promptBadge ? `  ${pc.dim(row.promptBadge)}` : "";
-    return `${pointer}     ${label}  ${dest}${badge}`;
+    const head = `${pointer}     ${label}  ${dest}`;
+    return `${head}${promptBadge(row.prompt, head)}`;
   }
 
   private frame() {
@@ -151,4 +184,75 @@ export async function browseTargets(
     return { kind: "done" };
   }
   return result as TreeAction;
+}
+
+/** A choice in {@link pickFromList}. `muted` renders grey (e.g. already-used), otherwise white. */
+export type PickItem = { value: string; label: string; hint?: string; muted?: boolean };
+
+class ListPrompt extends Prompt<string | null> {
+  private index = 0;
+
+  constructor(
+    private readonly title: string,
+    private readonly items: PickItem[],
+    io: { input?: Readable; output?: Writable } = {}
+  ) {
+    super(
+      {
+        input: io.input,
+        output: io.output,
+        render() {
+          return (this as unknown as ListPrompt).frame();
+        },
+      },
+      false
+    );
+    this.value = null;
+
+    this.on("key", (_char, key) => {
+      const name = key?.name;
+      if (name === "up") return this.move(-1);
+      if (name === "down") return this.move(1);
+      if (name === "return") {
+        this.value = this.items[this.index]?.value ?? null;
+        this.state = "submit";
+      }
+    });
+  }
+
+  private move(delta: number) {
+    if (this.items.length === 0) return;
+    this.index = (this.index + delta + this.items.length) % this.items.length;
+  }
+
+  private frame() {
+    const bar = pc.gray("│");
+    if (this.state === "submit" || this.state === "cancel") {
+      return `${pc.green("◇")}  ${this.title}`;
+    }
+    const lines = [`${pc.cyan("◆")}  ${this.title}`, `${bar}  ${pc.dim("↑/↓ move · enter select · esc cancel")}`];
+    for (const [i, item] of this.items.entries()) {
+      const focused = i === this.index;
+      const pointer = focused ? pc.green("❯") : " ";
+      // Already-used items are dimmed to match the hint "captions" on the right.
+      const label = focused ? pc.green(item.label) : item.muted ? pc.dim(item.label) : paint(item.label, WHITE);
+      const hint = item.hint ? `  ${pc.dim(item.hint)}` : "";
+      lines.push(`${bar}  ${pointer} ${label}${hint}`);
+    }
+    lines.push(pc.gray("└"));
+    return lines.join("\n");
+  }
+}
+
+/** Single-select list with the tree's palette (white/grey items, green on focus). Returns null on cancel. */
+export async function pickFromList(
+  title: string,
+  items: PickItem[],
+  io: { input?: Readable; output?: Writable } = {}
+): Promise<string | null> {
+  const result = await new ListPrompt(title, items, io).prompt();
+  if (isCancel(result)) {
+    return null;
+  }
+  return result as string | null;
 }
