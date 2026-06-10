@@ -17,6 +17,16 @@ function isRemotePath(value: string) {
   return /^https?:\/\//i.test(value);
 }
 
+/** Pull Markdown images out of a block of text, returning the text without them and their alt/path. */
+export function extractImages(text: string): { text: string; images: Array<{ alt: string; path: string }> } {
+  const images: Array<{ alt: string; path: string }> = [];
+  const stripped = text.replace(IMAGE_PATTERN, (_full, alt: string, rawPath: string) => {
+    images.push({ alt: alt.trim(), path: rawPath.replace(/^<|>$/g, "") });
+    return "";
+  });
+  return { text: stripped.replace(/\n{3,}/g, "\n\n").trim(), images };
+}
+
 /**
  * Reject obvious SSRF targets (loopback, link-local, private ranges, cloud metadata)
  * before fetching a remote image. Hostnames are resolved before every request and
@@ -65,7 +75,7 @@ function inferTitle(markdown: string) {
   return heading?.[1]?.trim();
 }
 
-async function loadMedia(media: SourceMedia) {
+export async function loadMedia(media: SourceMedia): Promise<SourceMedia> {
   if (media.isRemote) {
     const response = await fetchRemoteImage(media.resolvedPath);
     if (!response.ok) {

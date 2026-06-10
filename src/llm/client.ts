@@ -7,6 +7,50 @@ import { optionalSecret, resolveSecret } from "../util/secrets.js";
 const LLM_TIMEOUT_MS = 60_000;
 const LLM_MAX_OUTPUT_TOKENS = 8000;
 
+/**
+ * Provider-enforced JSON shape for the planning output, on top of the prompt's
+ * output contract. Kept deliberately simple (no unions/optionals) so every
+ * provider's structured-output mode accepts it: `title` is always present
+ * (empty string when there is none) and `mediaRefs` is always an array.
+ * normalizePlan tolerates empty title/refs, so this never loses information.
+ */
+const PLAN_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    title: { type: "string", description: "Optional post title; empty string when there is none." },
+    units: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          text: { type: "string" },
+          mediaRefs: { type: "array", items: { type: "string" } },
+        },
+        required: ["text", "mediaRefs"],
+      },
+    },
+  },
+  required: ["title", "units"],
+} as const;
+
+// Anthropic models known to support structured outputs (output_config.format).
+// The default `claude-sonnet-4-5` is NOT among them, so it stays prompt-only.
+const ANTHROPIC_STRUCTURED_OUTPUT_MODELS = [
+  "opus-4-8",
+  "opus-4-7",
+  "opus-4-6",
+  "opus-4-5",
+  "opus-4-1",
+  "sonnet-4-6",
+  "haiku-4-5",
+];
+
+function anthropicSupportsStructuredOutput(model: string) {
+  return ANTHROPIC_STRUCTURED_OUTPUT_MODELS.some((supported) => model.includes(supported));
+}
+
 export type LlmClient = {
   provider: LlmProvider;
   model: string;
@@ -30,6 +74,7 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
           config: {
             temperature: 0.3,
             responseMimeType: "application/json",
+            responseJsonSchema: PLAN_JSON_SCHEMA,
           },
         });
         const text = response.text;
@@ -60,7 +105,7 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
               model,
               input: prompt,
               text: {
-                format: { type: "json_object" },
+                format: { type: "json_schema", name: "social_plan", strict: true, schema: PLAN_JSON_SCHEMA },
               },
             }),
           },
@@ -99,6 +144,7 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
       timeout: LLM_TIMEOUT_MS,
       maxRetries: 2,
     });
+    const structuredOutput = anthropicSupportsStructuredOutput(model);
     return {
       provider,
       model,
@@ -110,6 +156,8 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
           max_tokens: LLM_MAX_OUTPUT_TOKENS,
           system: "Return only valid JSON. No Markdown fences. No commentary.",
           messages: [{ role: "user", content: prompt }],
+          // Enforce the JSON shape where the model supports it; older models rely on the prompt.
+          ...(structuredOutput ? { output_config: { format: { type: "json_schema", schema: PLAN_JSON_SCHEMA } } } : {}),
         });
         const text = message.content
           .filter((block): block is Anthropic.TextBlock => block.type === "text")

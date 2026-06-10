@@ -7,7 +7,7 @@ import type { Platform } from "../types.js";
 
 export type TreeRow =
   | { kind: "platform"; platform: Platform; label: string; promptBadge?: string }
-  | { kind: "account"; platform: Platform; account: string; label: string; status: string }
+  | { kind: "account"; platform: Platform; account: string; label: string }
   | {
       kind: "target";
       platform: Platform;
@@ -18,16 +18,26 @@ export type TreeRow =
       needsDestination?: boolean;
       promptBadge?: string;
     }
+  | { kind: "no-target"; platform: Platform; account: string }
   | { kind: "add-account" };
 
 export type TreeAction = { kind: "done" } | { kind: "select"; row: TreeRow };
 
 const KEYS = "↑/↓ move · enter options · esc done";
 
-// Platform headers: a light grey between white and dim, a touch brighter when selected. Never bold.
-function platformLabel(label: string, focused: boolean) {
-  const rgb = focused ? "210;210;210" : "160;160;160";
+function paint(label: string, rgb: string) {
   return `\x1b[38;2;${rgb}m${label}\x1b[39m`;
+}
+
+// Row palette: platforms/add-account white, accounts light grey, all turn green when
+// focused. A target's routing id (e.g. a Telegram channel) is always light blue.
+const WHITE = "235;235;235";
+const GREY = "160;160;160";
+const LIGHT_BLUE = "125;175;255";
+
+// Platform headers: white, green when selected. Never bold.
+function platformLabel(label: string, focused: boolean) {
+  return focused ? pc.green(label) : paint(label, WHITE);
 }
 
 /** Stable identity for a row, so the cursor can return to it after re-rendering the tree. */
@@ -35,6 +45,7 @@ export function rowKey(row: TreeRow): string {
   if (row.kind === "add-account") return "add-account";
   if (row.kind === "platform") return `platform:${row.platform}`;
   if (row.kind === "account") return `account:${row.platform}/${row.account}`;
+  if (row.kind === "no-target") return `no-target:${row.platform}/${row.account}`;
   return `target:${row.platform}/${row.account}/${row.target}`;
 }
 
@@ -87,7 +98,7 @@ class TargetTreePrompt extends Prompt<TreeAction> {
     const pointer = focused ? pc.green("❯") : " ";
 
     if (row.kind === "add-account") {
-      const label = focused ? pc.green("+ Add account") : pc.dim("+ Add account");
+      const label = focused ? pc.green("+ Add account") : paint("+ Add account", WHITE);
       return `${pointer} ${label}`;
     }
     if (row.kind === "platform") {
@@ -95,14 +106,18 @@ class TargetTreePrompt extends Prompt<TreeAction> {
       return `${pointer} ${platformLabel(row.label, focused)}${badge}`;
     }
     if (row.kind === "account") {
-      const label = focused ? row.label : pc.dim(row.label);
-      return `${pointer}   ${label}  ${pc.dim(row.status)}`;
+      const label = focused ? pc.green(row.label) : paint(row.label, GREY);
+      return `${pointer}   ${label}`;
     }
-    const label = focused ? row.label : pc.dim(row.label);
+    if (row.kind === "no-target") {
+      // Always yellow to flag the empty account; the green pointer still marks focus.
+      return `${pointer}     ${pc.yellow("No targets")}`;
+    }
+    const label = focused ? pc.green(row.label) : pc.dim(row.label);
     const dest = row.needsDestination
       ? pc.yellow("⚠ no destination")
       : row.routing
-        ? pc.dim(row.routing)
+        ? paint(row.routing, LIGHT_BLUE)
         : "";
     const badge = row.promptBadge ? `  ${pc.dim(row.promptBadge)}` : "";
     return `${pointer}     ${label}  ${dest}${badge}`;

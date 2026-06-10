@@ -105,15 +105,11 @@ function isBlank(value: unknown) {
 /**
  * Flatten nested `accounts.<platform>.<account>.targets` into the runtime `config.targets`
  * map (keyed `platform/account/name`), strip the `targets` key off the auth objects, and
- * give every account a `default` target when it declares none. Any legacy flat `targets`
- * entries are preserved as-is.
+ * Any legacy flat `targets` entries are preserved as-is. Accounts that declare no
+ * targets contribute none — there is no synthesized `default`.
  */
 export function normalizeTargets(config: UspConfig): UspConfig {
   const targets: Record<string, TargetConfig> = { ...(config.targets ?? {}) };
-  const accountsWithTarget = new Set<string>();
-  for (const target of Object.values(targets)) {
-    accountsWithTarget.add(`${target.platform}/${target.account}`);
-  }
 
   const accounts = (config.accounts ?? {}) as Record<
     string,
@@ -130,24 +126,13 @@ export function normalizeTargets(config: UspConfig): UspConfig {
           account: accountName,
           ...routing,
         };
-        accountsWithTarget.add(`${platform}/${accountName}`);
       }
     }
   }
 
-  // Accounts with no target at all get a prompt-only `default` (routing platforms will
-  // simply read as not-ready until a real target is added).
-  for (const [platform, platformAccounts] of Object.entries(accounts)) {
-    for (const accountName of Object.keys(platformAccounts ?? {})) {
-      if (!accountsWithTarget.has(`${platform}/${accountName}`)) {
-        targets[`${platform}/${accountName}/default`] = {
-          platform: platform as Platform,
-          account: accountName,
-        };
-      }
-    }
-  }
-
+  // Only explicitly-configured targets are published to. An account with no target
+  // (e.g. credentials present but never wired up) contributes nothing until the user
+  // adds one — the setup tree shows it as "No targets" and offers to add one.
   config.targets = targets;
   return config;
 }

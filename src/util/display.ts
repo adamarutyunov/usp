@@ -14,15 +14,22 @@ export function createSpinner(text: string) {
   }).start();
 }
 
+/** Divider shown between posts; matches the separator written into preview Markdown files. */
+export const POST_DIVIDER = "----------";
+
 export function printPlatformText(platform: Platform, plan: PlatformPlan) {
   console.log("");
-  console.log(pc.bold(`${platformName(platform)} text:`));
+  const count = plan.units.length;
+  const heading = count > 1 ? `${platformName(platform)} text (${count} posts):` : `${platformName(platform)} text:`;
+  console.log(pc.bold(heading));
   if (plan.title) {
     console.log(pc.dim(`Title: ${plan.title}`));
   }
   for (const [index, unit] of plan.units.entries()) {
-    const prefix = plan.units.length > 1 ? `${index + 1}. ` : "";
-    console.log(`${prefix}${unit.text}`);
+    if (index > 0) {
+      console.log(pc.dim(POST_DIVIDER));
+    }
+    console.log(unit.text);
     if (unit.mediaRefs?.length) {
       console.log(pc.dim(`   media: ${unit.mediaRefs.join(", ")}`));
     }

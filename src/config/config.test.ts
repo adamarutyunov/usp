@@ -183,7 +183,7 @@ describe("applyEnvFallbacks", () => {
 });
 
 describe("normalizeTargets", () => {
-  it("flattens nested account targets, strips the targets key, and adds a default", () => {
+  it("flattens nested account targets and does not synthesize defaults for accounts with none", () => {
     const config = normalizeTargets({
       accounts: {
         telegram: {
@@ -195,14 +195,13 @@ describe("normalizeTargets", () => {
             },
           },
         },
-        x: { main: { accessToken: "a" } }, // no targets -> default
+        x: { main: { accessToken: "a" } }, // no targets -> contributes nothing
       },
     });
 
     expect(Object.keys(config.targets ?? {}).sort()).toEqual([
       "telegram/newsbot/en",
       "telegram/newsbot/ru",
-      "x/main/default",
     ]);
     expect(config.targets?.["telegram/newsbot/en"]).toEqual({
       platform: "telegram",
@@ -210,7 +209,7 @@ describe("normalizeTargets", () => {
       chatId: "@news",
     });
     expect(config.targets?.["telegram/newsbot/ru"]?.prompt).toEqual({ mode: "append", text: "In Russian." });
-    expect(config.targets?.["x/main/default"]).toEqual({ platform: "x", account: "main" });
+    expect(config.targets?.["x/main/default"]).toBeUndefined();
     // The targets key is removed from the auth object.
     expect((config.accounts?.telegram?.newsbot as { targets?: unknown }).targets).toBeUndefined();
   });

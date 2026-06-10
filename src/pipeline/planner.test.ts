@@ -41,6 +41,12 @@ describe("LlmPlatformPlanner as-is mode", () => {
 
     expect(plan).toEqual(rawPlan(input()));
     expect(plan.title).toBe("Title");
-    expect(plan.units).toEqual([{ text: "# Title\n\nVerbatim body", mediaRefs: ["img1"] }]);
+    // The title heading is carried by plan.title, not repeated in the post text.
+    expect(plan.units).toEqual([{ text: "Verbatim body", mediaRefs: ["img1"] }]);
+  });
+
+  it("keeps the body intact when the heading does not match the inferred title", () => {
+    const plan = rawPlan({ ...input(), title: "Other title" });
+    expect(plan.units[0]?.text).toBe("# Title\n\nVerbatim body");
   });
 });

@@ -210,33 +210,17 @@ async function editTargetRouting(project: UspConfig, platform: Platform, account
 
 async function editTargetPrompt(project: UspConfig, platform: Platform, accountName: string, targetName: string) {
   const target = projectAccount(project, platform, accountName).targets[targetName]!;
-  if (target.prompt) {
-    note(target.prompt.text, `Current override (${target.prompt.mode})`);
-  }
-  const action = orBack(
-    await select({
-      message: "Target prompt",
-      options: [
-        { value: "append", label: "Append", hint: "Add after the platform rules" },
-        { value: "replace", label: "Replace", hint: "Use only your text" },
-        { value: "clear", label: "Clear override" },
-        { value: "back", label: "Back" },
-      ],
-    })
-  ) as "append" | "replace" | "clear" | "back";
-
-  if (action === "back") return;
-  if (action === "clear") {
-    delete target.prompt;
-    return;
-  }
   const value = orBack(
     await text({
-      message: action === "append" ? "Text to append" : "Replacement prompt",
-      defaultValue: target.prompt?.mode === action ? target.prompt.text : undefined,
+      message: "Target prompt (added after the platform rules; leave empty to clear)",
+      defaultValue: target.prompt?.text ?? "",
     })
-  );
-  target.prompt = { mode: action, text: value };
+  ).trim();
+  if (value) {
+    target.prompt = { mode: "append", text: value };
+  } else {
+    delete target.prompt;
+  }
 }
 
 function buildTreeRows(socialAuth: UspConfig, project: UspConfig): TreeRow[] {
@@ -262,7 +246,11 @@ function buildTreeRows(socialAuth: UspConfig, project: UspConfig): TreeRow[] {
     const routing = ROUTING_FIELDS[platform];
     for (const account of [...accounts].sort()) {
       const targets = Object.entries(readTargets(project, platform, account));
-      rows.push({ kind: "account", platform, account, label: account, status: `${targets.length} target${targets.length === 1 ? "" : "s"}` });
+      rows.push({ kind: "account", platform, account, label: account });
+
+      if (targets.length === 0) {
+        rows.push({ kind: "no-target", platform, account });
+      }
 
       for (const [name, target] of targets) {
         const dest = routing ? (target as Record<string, unknown>)[routing.key] : undefined;
@@ -465,8 +453,8 @@ async function managePlatformNode(socialAuth: UspConfig, project: UspConfig, pro
     await select({
       message: PLATFORM_INFO[platform].label,
       options: [
-        { value: "prompt", label: "Edit platform prompt" },
         { value: "add-account", label: "Add account" },
+        { value: "prompt", label: "Edit platform prompt" },
         { value: "back", label: "Back" },
       ],
     })
@@ -488,6 +476,8 @@ async function dispatchTreeSelection(row: TreeRow, socialAuth: UspConfig, projec
     await managePlatformNode(socialAuth, project, projectPath, row.platform);
   } else if (row.kind === "account") {
     await manageAccountNode(socialAuth, project, projectPath, row.platform, row.account);
+  } else if (row.kind === "no-target") {
+    await addTargetFlow(project, projectPath, row.platform, row.account);
   } else {
     await manageTargetNode(socialAuth, project, projectPath, row.platform, row.account, row.target);
   }
@@ -548,20 +538,20 @@ async function configureGlobalPrompt() {
   note("Global prompt saved.", "Saved");
 }
 
-async function configurePostingDefaults(project: UspConfig) {
-  const targets = Object.entries(project.targets ?? {});
-  if (targets.length === 0) {
+async function configurePostingDefaults(socialAuth: UspConfig, project: UspConfig) {
+  const global = await loadGlobalConfig();
+  // Build the same target list publish sees: only explicitly-configured targets.
+  const rows: PostTargetRow[] = [];
+  for (const { platform, name: account } of listAccounts(socialAuth, project)) {
+    for (const name of Object.keys(readTargets(project, platform, account))) {
+      const id = `${platform}/${account}/${name}`;
+      rows.push({ id, platform, account, mode: global.postingDefaults?.[id] ?? "off" });
+    }
+  }
+  if (rows.length === 0) {
     note("No targets configured yet. Add a target first.", "Default posting");
     return;
   }
-
-  const global = await loadGlobalConfig();
-  const rows: PostTargetRow[] = targets.map(([id, target]) => ({
-    id,
-    platform: target.platform,
-    account: target.account,
-    mode: global.postingDefaults?.[id] ?? "off",
-  }));
 
   const selection = await pickPostTargets(rows, { message: "Default posting per target" });
   if (selection === null) {
@@ -634,7 +624,7 @@ async function runInteractiveSetup() {
       }
 
       if (section === "posting") {
-        await configurePostingDefaults(project);
+        await configurePostingDefaults(socialAuth, project);
         continue;
       }
 

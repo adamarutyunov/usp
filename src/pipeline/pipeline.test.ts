@@ -56,9 +56,9 @@ class ModeAwarePlanner extends PlatformPlanner {
   }
 }
 
-function input(): PipelineInput {
+function input(dir: string = os.tmpdir()): PipelineInput {
   return {
-    inputPath: "/tmp/post.md",
+    inputPath: path.join(dir, "post.md"),
     title: "Post",
     body: "# Post\n\nBody",
     bodyWithMediaPlaceholders: "# Post\n\nBody",
@@ -73,14 +73,14 @@ describe("PublishPipeline preview support", () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "usp-preview-"));
     const planner = new RecordingPlanner();
     const poster = new RecordingPoster();
-    const pipeline = new PublishPipeline(new StaticInputSource(input()), planner, poster);
+    const pipeline = new PublishPipeline(new StaticInputSource(input(dir)), planner, poster);
 
     const result = await pipeline.publish({
       config,
       targets: [{ id: "x-main", config: { platform: "x", account: "main" } }],
       dryRun: false,
       preview: {
-        store: new PreviewStore(dir),
+        store: new PreviewStore(),
         previewOnly: true,
       },
     });
@@ -89,18 +89,18 @@ describe("PublishPipeline preview support", () => {
     expect(poster.calls).toEqual([]);
     expect(result.results[0]?.posts[0]?.text).toBe("generated x-main");
     expect(result.previewDir).toBeTruthy();
-    await expect(fs.readdir(result.previewDir!)).resolves.toEqual(["x-main-x-main.json"]);
+    await expect(fs.readdir(result.previewDir!)).resolves.toEqual(["x-main-x-main.md"]);
   });
 
   it("reuses cached target text and generates missing target previews", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "usp-preview-"));
-    const store = new PreviewStore(dir);
+    const store = new PreviewStore();
     const target = { id: "x-main", config: { platform: "x" as const, account: "main" } };
-    await store.open(input()).write(target, { units: [{ text: "cached x-main" }] });
+    await store.open(input(dir)).write(target, { units: [{ text: "cached x-main" }] });
 
     const planner = new RecordingPlanner();
     const poster = new RecordingPoster();
-    const pipeline = new PublishPipeline(new StaticInputSource(input()), planner, poster);
+    const pipeline = new PublishPipeline(new StaticInputSource(input(dir)), planner, poster);
 
     const result = await pipeline.publish({
       config,
@@ -118,33 +118,37 @@ describe("PublishPipeline preview support", () => {
 
     expect(planner.calls).toEqual(["x-alt"]);
     expect(result.results.map((item) => item.posts[0]?.text)).toEqual(["cached x-main", "generated x-alt"]);
-    await expect(fs.readdir(result.previewDir!)).resolves.toEqual(["x-alt-x-alt.json", "x-main-x-main.json"]);
+    await expect(fs.readdir(result.previewDir!)).resolves.toEqual(["x-alt-x-alt.md", "x-main-x-main.md"]);
   });
 
-  it("does not reuse previews when the planning fingerprint changes", async () => {
+  it("round-trips a multi-post edited preview through Markdown", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "usp-preview-"));
+    const store = new PreviewStore();
     const target = { id: "x-main", config: { platform: "x" as const, account: "main" } };
-    const staleStore = new PreviewStore(dir);
-    await staleStore.open(input(), { fingerprint: () => "old" }).write(target, { units: [{ text: "stale" }] });
+    // A user-edited preview: two posts split by a dash line.
+    await fs.mkdir(store.open(input(dir)).dir, { recursive: true });
+    await fs.writeFile(
+      store.open(input(dir)).filePath(target),
+      "first post\n\n----------\n\nsecond post\n"
+    );
 
     const planner = new RecordingPlanner();
     const poster = new RecordingPoster();
-    const pipeline = new PublishPipeline(new StaticInputSource(input()), planner, poster);
+    const pipeline = new PublishPipeline(new StaticInputSource(input(dir)), planner, poster);
 
     const result = await pipeline.publish({
       config,
       targets: [target],
       dryRun: true,
       preview: {
-        store: new PreviewStore(dir),
+        store,
         previewOnly: false,
-        fingerprint: () => "new",
         onExistingDirectory: async () => "reuse",
       },
     });
 
-    expect(planner.calls).toEqual(["x-main"]);
-    expect(result.results[0]?.posts[0]?.text).toBe("generated x-main");
+    expect(planner.calls).toEqual([]); // reused, not regenerated
+    expect(result.results[0]?.posts.map((post) => post.text)).toEqual(["first post", "second post"]);
   });
 });
 

@@ -53,6 +53,20 @@ describe("createLlmClient (anthropic)", () => {
     expect(constructorArgs[0]).not.toHaveProperty("apiKey");
   });
 
+  it("omits structured output for a model that does not support it (default sonnet-4-5)", async () => {
+    const client = createLlmClient({ provider: "anthropic", apiKey: "k" });
+    await client.generate("prompt");
+    expect(createMessage.mock.calls[0]![0]).not.toHaveProperty("output_config");
+  });
+
+  it("enforces structured output for a supporting model", async () => {
+    const client = createLlmClient({ provider: "anthropic", apiKey: "k", model: "claude-opus-4-8" });
+    await client.generate("prompt");
+    const params = createMessage.mock.calls[0]![0];
+    expect(params.output_config?.format?.type).toBe("json_schema");
+    expect(params.output_config?.format?.schema?.required).toEqual(["title", "units"]);
+  });
+
   it("throws when neither key nor token is configured", () => {
     expect(() => createLlmClient({ provider: "anthropic" })).toThrow(/Anthropic API key or auth token/);
   });

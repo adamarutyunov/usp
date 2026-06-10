@@ -15,7 +15,7 @@ function key(input: PassThrough, name: string) {
 function rows(): TreeRow[] {
   return [
     { kind: "platform", platform: "bluesky", label: "Bluesky" },
-    { kind: "account", platform: "bluesky", account: "main", label: "main", status: "1 target" },
+    { kind: "account", platform: "bluesky", account: "main", label: "main" },
     { kind: "target", platform: "bluesky", account: "main", target: "default", label: "default" },
     { kind: "add-account" },
   ];

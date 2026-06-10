@@ -1,5 +1,5 @@
 import type { Platform, PlatformPlan, PublishPlan, PublishTargetResult, TargetConfig, UspConfig } from "../types.js";
-import type { PreviewFingerprint, PreviewStore } from "../preview/store.js";
+import type { PreviewStore } from "../preview/store.js";
 import { PartialPublishError } from "../adapters/common.js";
 import {
   InputSource,
@@ -45,7 +45,6 @@ async function mapWithConcurrency<T, R>(
 export type PreviewPublishOptions = {
   store: PreviewStore;
   previewOnly: boolean;
-  fingerprint?: PreviewFingerprint;
   onExistingDirectory?: (dir: string) => Promise<"reuse" | "regenerate">;
 };
 
@@ -162,7 +161,7 @@ export class PublishPipeline {
   }): Promise<PipelineRunResult> {
     const input = await this.inputSource.read();
     const basePlan = createEmptyPlan(input);
-    const previewSession = preview?.store.open(input, { fingerprint: preview.fingerprint });
+    const previewSession = preview?.store.open(input);
     const previewDir = previewSession?.dir;
     const previewExists = previewSession ? await previewSession.exists() : false;
     const previewActive = Boolean(previewSession && preview && (preview.previewOnly || previewExists));
@@ -180,7 +179,10 @@ export class PublishPipeline {
     // otherwise by platform+postMode so same-platform targets share one LLM call.
     const planMemo = new Map<string, Promise<PlatformPlan>>();
 
-    const resolvePlan = async (target: TargetRef): Promise<PlatformPlan> => {
+    // Resolve a target's plan and the media it should post with. For a reused
+    // preview that's the (possibly edited) Markdown plus any images the user added;
+    // otherwise it's the freshly generated plan over the source media.
+    const resolvePlan = async (target: TargetRef): Promise<{ plan: PlatformPlan; media: typeof input.media }> => {
       if (previewActive && reusePreview && previewSession) {
         const cached = await previewSession.read(target);
         if (cached) {
@@ -201,7 +203,7 @@ export class PublishPipeline {
         await previewSession.write(target, plan);
         hooks.onPreviewWrite?.(target, previewSession.filePath(target));
       }
-      return plan;
+      return { plan, media: input.media };
     };
 
     // Per-target plan handed to the poster; avoids a shared `plan.platforms`
@@ -215,8 +217,11 @@ export class PublishPipeline {
     const processTarget = async (target: TargetRef): Promise<PublishTargetResult> => {
       hooks.onPrepareStart?.(target);
       let platformPlan: PlatformPlan;
+      let media = input.media;
       try {
-        platformPlan = await resolvePlan(target);
+        const resolved = await resolvePlan(target);
+        platformPlan = resolved.plan;
+        media = resolved.media;
         hooks.onPrepareSuccess?.(target, platformPlan);
       } catch (error) {
         hooks.onPrepareError?.(target, error);
@@ -234,7 +239,7 @@ export class PublishPipeline {
         target: target.config,
         config,
         plan: targetPlan,
-        media: input.media,
+        media,
       };
 
       if (dryRun) {

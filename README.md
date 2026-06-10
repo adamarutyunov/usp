@@ -58,6 +58,20 @@ cat post.md | usp publish --stdin
 
 Without `--target`, `usp` opens an interactive tree to set each target to **off**, **as-is** (raw Markdown), or **LLM** (rewritten). The first publish offers to save that selection as the default. Pass `--target platform/account/name` (repeatable) to skip the tree.
 
+### Editable previews
+
+`usp preview ./post.md` writes one Markdown file per target into a sibling `post.usp-preview/` folder (e.g. `post.usp-preview/x-main-default.md`), with posts separated by a line of dashes:
+
+```markdown
+First tweet of the thread.
+----------
+Second tweet, with an image.
+
+![alt](./chart.png)
+```
+
+Edit those files freely — rewrite text, move images, or add/remove dash lines to split or merge posts. The dash lines and post lengths are yours to manage; `usp` does not re-split edited previews. On the next `usp publish ./post.md` it finds the folder and offers to **reuse** your edited text or **regenerate** from source. Re-running `usp preview` overwrites the folder (after a confirm).
+
 Markdown images keep their position — text around an image splits into separate posts in a thread:
 
 ```markdown
