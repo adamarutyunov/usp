@@ -15,6 +15,31 @@ import {
 
 type TelegramResult = { ok?: boolean; result?: { message_id?: number }; description?: string };
 
+// Telegram's legacy Markdown dialect: *bold*, _italic_, `code`, [text](url). The platform
+// prompt steers the model to emit this. As-is content (raw CommonMark) won't match and will
+// trip the parser — that's fine, the fallback below resends it as plain text.
+const PARSE_MODE = "Markdown";
+
+// Legacy Markdown has no escape mechanism, so a stray/unbalanced *, _, ` or [ makes Telegram
+// reject the whole message with a 400 "can't parse entities". When that happens, resend the
+// exact same text without parse_mode so the post still goes out (just unformatted).
+function isParseEntitiesError(error: unknown) {
+  return error instanceof Error && /can't parse entities|can't find end|parse entities/i.test(error.message);
+}
+
+async function sendWithMarkdownFallback(
+  send: (useParseMode: boolean) => Promise<TelegramResult>
+): Promise<TelegramResult> {
+  try {
+    return await send(true);
+  } catch (error) {
+    if (!isParseEntitiesError(error)) {
+      throw error;
+    }
+    return send(false);
+  }
+}
+
 function getBotToken(context: PublishContext) {
   const account = requireAccount(
     context.config.accounts?.telegram?.[context.target.account],
@@ -83,41 +108,52 @@ export async function publishToTelegram(context: PublishContext) {
     const media = getReferencedMedia(context.media, unit.mediaRefs);
 
     if (media.length === 0) {
-      const data = await callTelegram(botToken, "sendMessage", {
-        chat_id: chatId,
-        text: unit.text,
-        disable_web_page_preview: false,
-      });
+      const data = await sendWithMarkdownFallback((useParseMode) =>
+        callTelegram(botToken, "sendMessage", {
+          chat_id: chatId,
+          text: unit.text,
+          disable_web_page_preview: false,
+          ...(useParseMode ? { parse_mode: PARSE_MODE } : {}),
+        })
+      );
       return postFromResult(data, unit.text, chatId);
     }
 
     if (media.length === 1) {
       const item = media[0]!;
-      const form = new FormData();
-      form.set("chat_id", chatId);
-      form.set("caption", unit.text);
-      if (item.isRemote) {
-        form.set("photo", item.rawPath);
-      } else {
-        form.append("photo", mediaBlob(item, "telegram"), path.basename(item.resolvedPath));
-      }
-      const data = await callTelegram(botToken, "sendPhoto", form);
+      const data = await sendWithMarkdownFallback((useParseMode) => {
+        const form = new FormData();
+        form.set("chat_id", chatId);
+        form.set("caption", unit.text);
+        if (useParseMode) {
+          form.set("parse_mode", PARSE_MODE);
+        }
+        if (item.isRemote) {
+          form.set("photo", item.rawPath);
+        } else {
+          form.append("photo", mediaBlob(item, "telegram"), path.basename(item.resolvedPath));
+        }
+        return callTelegram(botToken, "sendPhoto", form);
+      });
       return postFromResult(data, unit.text, chatId);
     }
 
-    const form = new FormData();
-    form.set("chat_id", chatId);
-    const mediaPayload = media.map((item, index) => {
-      const caption = index === 0 ? unit.text : undefined;
-      if (item.isRemote) {
-        return { type: "photo", media: item.rawPath, caption };
-      }
-      const field = `file${index}`;
-      form.append(field, mediaBlob(item, "telegram"), path.basename(item.resolvedPath));
-      return { type: "photo", media: `attach://${field}`, caption };
+    const data = await sendWithMarkdownFallback((useParseMode) => {
+      const form = new FormData();
+      form.set("chat_id", chatId);
+      const mediaPayload = media.map((item, index) => {
+        const caption = index === 0 ? unit.text : undefined;
+        const parseMode = useParseMode && caption ? { parse_mode: PARSE_MODE } : {};
+        if (item.isRemote) {
+          return { type: "photo", media: item.rawPath, caption, ...parseMode };
+        }
+        const field = `file${index}`;
+        form.append(field, mediaBlob(item, "telegram"), path.basename(item.resolvedPath));
+        return { type: "photo", media: `attach://${field}`, caption, ...parseMode };
+      });
+      form.set("media", JSON.stringify(mediaPayload));
+      return callTelegram(botToken, "sendMediaGroup", form);
     });
-    form.set("media", JSON.stringify(mediaPayload));
-    const data = await callTelegram(botToken, "sendMediaGroup", form);
     return postFromResult(data, unit.text, chatId);
   });
 
