@@ -10,10 +10,19 @@ import {
   requireAccount,
   type PublishContext,
 } from "./common.js";
+import { uploadTempMedia } from "./temp-host.js";
 
 const API_BASE = "https://graph.threads.net/v1.0";
 const CONTAINER_POLL_ATTEMPTS = 20;
 const CONTAINER_POLL_DELAY_MS = 2_000;
+// A just-published parent post isn't immediately referenceable, so a reply that points
+// at it can 400 with "does not exist". Wait until it's retrievable, then retry as a guard.
+const PARENT_POLL_ATTEMPTS = 20;
+const PARENT_POLL_DELAY_MS = 3_000;
+const REPLY_RETRY_ATTEMPTS = 8;
+const REPLY_RETRY_DELAY_MS = 3_000;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 type ThreadsContainerResponse = {
   id?: string;
@@ -88,6 +97,28 @@ async function waitForContainer(userId: string, accessToken: string, containerId
   throw new Error(`Threads container ${containerId} did not finish processing in time.`);
 }
 
+/** Fetch the public permalink for a published post (threads_publish only returns the id). */
+async function getPostPermalink(accessToken: string, postId: string): Promise<string | undefined> {
+  const params = new URLSearchParams({ fields: "permalink", access_token: accessToken });
+  const response = await fetchWithTimeout(`${API_BASE}/${encodeURIComponent(postId)}?${params.toString()}`);
+  const { ok, data } = await readJsonResponse<{ permalink?: string }>(response);
+  return ok ? data?.permalink ?? undefined : undefined;
+}
+
+/** Poll until a just-published post is retrievable, so it can be referenced as a reply parent. */
+async function waitForPostAvailable(accessToken: string, postId: string) {
+  await pollUntil({
+    attempts: PARENT_POLL_ATTEMPTS,
+    delayMs: PARENT_POLL_DELAY_MS,
+    async poll() {
+      const params = new URLSearchParams({ fields: "id", access_token: accessToken });
+      const response = await fetchWithTimeout(`${API_BASE}/${encodeURIComponent(postId)}?${params.toString()}`);
+      return response.ok;
+    },
+    isDone: (ok) => ok,
+  });
+}
+
 async function createContainer({
   userId,
   accessToken,
@@ -126,7 +157,16 @@ async function createContainer({
     params.set("reply_control", replyControl);
   }
 
-  const data = await postThreads<ThreadsContainerResponse>(`/${encodeURIComponent(userId)}/threads`, params);
+  let data: ThreadsContainerResponse;
+  try {
+    data = await postThreads<ThreadsContainerResponse>(`/${encodeURIComponent(userId)}/threads`, params);
+  } catch (error) {
+    // "does not exist" doesn't say which resource — name what we sent so it's diagnosable.
+    const sent = [replyToId ? `reply_to_id=${replyToId}` : null, media[0] ? `image_url=${media[0].rawPath}` : null]
+      .filter(Boolean)
+      .join(", ");
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${sent ? ` (sent ${sent})` : ""}`);
+  }
   if (!data.id) {
     throw new Error(`Threads did not return a container id: ${JSON.stringify(data)}`);
   }
@@ -142,7 +182,22 @@ async function publishContainer(userId: string, accessToken: string, creationId:
   if (!data.id) {
     throw new Error(`Threads did not return a post id: ${JSON.stringify(data)}`);
   }
-  return data;
+  return { id: data.id, permalink: data.permalink };
+}
+
+/** Retry a reply-container creation while the just-published parent post settles. */
+async function retryWhileParentSettles(create: () => Promise<string>): Promise<string> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await create();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempt >= REPLY_RETRY_ATTEMPTS || !/does not exist/i.test(message)) {
+        throw error;
+      }
+      await sleep(REPLY_RETRY_DELAY_MS);
+    }
+  }
 }
 
 export async function publishToThreads(context: PublishContext) {
@@ -158,25 +213,48 @@ export async function publishToThreads(context: PublishContext) {
   const accessToken = resolveSecret(account.accessToken, "Threads access token");
   const userId = account.userId || "me";
   let replyToId: string | undefined;
+  const warnings: string[] = [];
 
   const posts = await publishThread(context.plan.units, async (unit) => {
-    const media = getReferencedMedia(context.media, unit.mediaRefs);
-    const containerId = await createContainer({
-      userId,
-      accessToken,
-      text: unit.text,
-      media,
-      replyToId,
-      replyControl: account.replyControl,
-    });
-    // Media containers need a moment for Meta to ingest the remote asset before publishing.
-    if (media.length > 0) {
-      await waitForContainer(userId, accessToken, containerId);
+    const referenced = getReferencedMedia(context.media, unit.mediaRefs);
+    // Threads only accepts public image/video URLs. With uploadLocalMedia, host local
+    // files temporarily and use the URL; otherwise skip them with a warning.
+    const media: SourceMedia[] = [];
+    for (const item of referenced) {
+      if (item.isRemote) {
+        media.push(item);
+      } else if (context.config.uploadLocalMedia) {
+        const url = await uploadTempMedia(item);
+        media.push({ ...item, rawPath: url, resolvedPath: url, isRemote: true });
+      } else {
+        warnings.push(
+          "Skipped local image(s) on Threads — enable 'Media hosting' in `usp setup`, or use a public https URL."
+        );
+      }
     }
+    // A reply references the previous post; wait until that post is actually retrievable.
+    if (replyToId) {
+      await waitForPostAvailable(accessToken, replyToId);
+    }
+    const makeContainer = () =>
+      createContainer({
+        userId,
+        accessToken,
+        text: unit.text,
+        media,
+        replyToId,
+        replyControl: account.replyControl,
+      });
+    // Final guard in case it's still settling right after becoming retrievable.
+    const containerId = replyToId ? await retryWhileParentSettles(makeContainer) : await makeContainer();
+    // The container's status reaching FINISHED is the reliable "ready to publish" signal —
+    // always wait for it (text and media, root and reply) before publishing.
+    await waitForContainer(userId, accessToken, containerId);
     const published = await publishContainer(userId, accessToken, containerId);
     replyToId = published.id;
-    return { id: published.id, url: published.permalink, text: unit.text };
+    const permalink = published.permalink ?? (await getPostPermalink(accessToken, published.id));
+    return { id: published.id, url: permalink, text: unit.text };
   });
 
-  return publishResult(context, posts);
+  return publishResult(context, posts, warnings);
 }

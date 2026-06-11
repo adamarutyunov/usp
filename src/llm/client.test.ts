@@ -31,13 +31,13 @@ describe("createLlmClient (anthropic)", () => {
     const client = createLlmClient({ provider: "anthropic", apiKey: "test-key" });
     const text = await client.generate("prompt");
 
-    expect(client.model).toBe("claude-sonnet-4-5");
+    expect(client.model).toBe("claude-sonnet-4-6");
     expect(text).toBe("{\"units\":[{\"text\":\"ok\"}]}");
     expect(constructorArgs[0]).toMatchObject({ apiKey: "test-key" });
     expect(constructorArgs[0]).not.toHaveProperty("authToken");
     expect(createMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: "claude-sonnet-4-5",
+        model: "claude-sonnet-4-6",
         messages: [{ role: "user", content: "prompt" }],
       })
     );
@@ -53,8 +53,8 @@ describe("createLlmClient (anthropic)", () => {
     expect(constructorArgs[0]).not.toHaveProperty("apiKey");
   });
 
-  it("omits structured output for a model that does not support it (default sonnet-4-5)", async () => {
-    const client = createLlmClient({ provider: "anthropic", apiKey: "k" });
+  it("omits structured output for a model that does not support it (legacy sonnet-4-5)", async () => {
+    const client = createLlmClient({ provider: "anthropic", apiKey: "k", model: "claude-sonnet-4-5" });
     await client.generate("prompt");
     expect(createMessage.mock.calls[0]![0]).not.toHaveProperty("output_config");
   });

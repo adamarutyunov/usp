@@ -89,7 +89,7 @@ describe("PublishPipeline preview support", () => {
     expect(poster.calls).toEqual([]);
     expect(result.results[0]?.posts[0]?.text).toBe("generated x-main");
     expect(result.previewDir).toBeTruthy();
-    await expect(fs.readdir(result.previewDir!)).resolves.toEqual(["x-main-x-main.md"]);
+    await expect(fs.readdir(result.previewDir!)).resolves.toEqual(["x-main.md"]);
   });
 
   it("reuses cached target text and generates missing target previews", async () => {
@@ -118,7 +118,7 @@ describe("PublishPipeline preview support", () => {
 
     expect(planner.calls).toEqual(["x-alt"]);
     expect(result.results.map((item) => item.posts[0]?.text)).toEqual(["cached x-main", "generated x-alt"]);
-    await expect(fs.readdir(result.previewDir!)).resolves.toEqual(["x-alt-x-alt.md", "x-main-x-main.md"]);
+    await expect(fs.readdir(result.previewDir!)).resolves.toEqual(["x-alt.md", "x-main.md"]);
   });
 
   it("round-trips a multi-post edited preview through Markdown", async () => {
@@ -169,6 +169,24 @@ describe("PublishPipeline mode handling (no preview)", () => {
 
     expect(planner.calls).toEqual(["x:llm", "x:as-is"]);
     expect(result.results.map((item) => item.posts[0]?.text)).toEqual(["x:llm", "x:as-is"]);
+  });
+
+  it("plans separately when same-account targets have different prompts", async () => {
+    const planner = new RecordingPlanner();
+    const poster = new RecordingPoster();
+    const pipeline = new PublishPipeline(new StaticInputSource(input()), planner, poster);
+
+    const result = await pipeline.publish({
+      config,
+      dryRun: true,
+      targets: [
+        { id: "x-en", config: { platform: "x", account: "main", prompt: { mode: "replace", text: "English" } }, postMode: "llm" },
+        { id: "x-ru", config: { platform: "x", account: "main", prompt: { mode: "replace", text: "Russian" } }, postMode: "llm" },
+      ],
+    });
+
+    expect(planner.calls).toEqual(["x-en", "x-ru"]);
+    expect(result.results.map((item) => item.posts[0]?.text)).toEqual(["generated x-en", "generated x-ru"]);
   });
 
   it("dedupes planning for same platform and mode", async () => {

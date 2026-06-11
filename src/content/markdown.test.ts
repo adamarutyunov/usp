@@ -3,7 +3,25 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { readMarkdownInput, readMarkdownText } from "./markdown.js";
+import { localFsPath, readMarkdownInput, readMarkdownText } from "./markdown.js";
+
+describe("localFsPath", () => {
+  it("converts a file: URL and percent-encoding to a filesystem path", () => {
+    expect(localFsPath("file:///Users/x/a%20b/Screenshot%20.png", "/base")).toBe("/Users/x/a b/Screenshot .png");
+  });
+
+  it("handles a single-slash file: URL", () => {
+    expect(localFsPath("file:/Users/x/c.png", "/base")).toBe("/Users/x/c.png");
+  });
+
+  it("percent-decodes a relative local path against the base dir", () => {
+    expect(localFsPath("./sub%20dir/c.png", "/base")).toBe("/base/sub dir/c.png");
+  });
+
+  it("leaves a literal percent intact when decoding would fail", () => {
+    expect(localFsPath("./50%off.png", "/base")).toBe("/base/50%off.png");
+  });
+});
 
 describe("readMarkdownInput", () => {
   it("extracts normal markdown images in source order and loads local files", async () => {

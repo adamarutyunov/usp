@@ -5,3 +5,4 @@ dist/
 *.usp-preview/
 coverage/
 *.log
+package-lock.json

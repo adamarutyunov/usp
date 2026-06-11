@@ -2,6 +2,7 @@ import dns from "node:dns/promises";
 import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import mime from "mime";
 import type { MarkdownInput, SourceMedia } from "../types.js";
@@ -15,6 +16,28 @@ const MAX_REMOTE_REDIRECTS = 5;
 
 function isRemotePath(value: string) {
   return /^https?:\/\//i.test(value);
+}
+
+/**
+ * Resolve a local image reference to an absolute filesystem path. Handles `file:` URLs
+ * (e.g. a dragged-in screenshot) and percent-encoding (`%20`, `%C2%A0`) that Markdown
+ * editors emit — both of which path.resolve would otherwise mangle.
+ */
+export function localFsPath(rawPath: string, baseDir: string): string {
+  if (/^file:/i.test(rawPath)) {
+    try {
+      return fileURLToPath(new URL(rawPath));
+    } catch {
+      // Not a well-formed file URL — fall through and treat it as a plain path.
+    }
+  }
+  let decoded = rawPath;
+  try {
+    decoded = decodeURIComponent(rawPath);
+  } catch {
+    // Malformed percent-encoding (a literal "%"): use the path as written.
+  }
+  return path.resolve(baseDir, decoded);
 }
 
 /** Pull Markdown images out of a block of text, returning the text without them and their alt/path. */
@@ -166,7 +189,7 @@ async function parseMarkdownInput({
     const id = `img${index}`;
     const decodedPath = rawPath.replace(/^<|>$/g, "");
     const isRemote = isRemotePath(decodedPath);
-    const resolvedPath = isRemote ? decodedPath : path.resolve(baseDir, decodedPath);
+    const resolvedPath = isRemote ? decodedPath : localFsPath(decodedPath, baseDir);
     media.push({
       id,
       alt: alt.trim(),

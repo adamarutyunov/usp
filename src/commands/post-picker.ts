@@ -45,6 +45,9 @@ class PostTargetPrompt extends Prompt<PostTargetRow[]> {
   private index = 0;
   private readonly labelWidth: number;
   private readonly message: string;
+  // Modes saved by the last "disable all" (Shift+A); a second Shift+A restores them,
+  // unless a mode was changed in between (which clears this).
+  private revertModes: PostMode[] | null = null;
 
   constructor(rows: PostTargetRow[], io: PickOptions = {}) {
     super(
@@ -72,9 +75,32 @@ class PostTargetPrompt extends Prompt<PostTargetRow[]> {
       } else if (action === "space" || action === "right") {
         const row = this.rows[this.index];
         if (row) row.mode = nextMode(row.mode, 1);
+        this.revertModes = null; // a manual change invalidates the disable-all undo
       } else if (action === "left") {
         const row = this.rows[this.index];
         if (row) row.mode = nextMode(row.mode, -1);
+        this.revertModes = null;
+      }
+      this.value = this.rows;
+    });
+
+    this.on("key", (_char, key) => {
+      // clack lowercases the char, so detect Shift+A via the key modifiers.
+      if (!(key?.name === "a" && key?.shift)) {
+        return;
+      }
+      if (this.revertModes) {
+        // Second Shift+A with no changes since: restore the saved modes.
+        this.rows.forEach((row, rowIndex) => {
+          row.mode = this.revertModes![rowIndex]!;
+        });
+        this.revertModes = null;
+      } else {
+        // First Shift+A: remember current modes, then turn everything off.
+        this.revertModes = this.rows.map((row) => row.mode);
+        for (const row of this.rows) {
+          row.mode = "off";
+        }
       }
       this.value = this.rows;
     });
@@ -102,7 +128,7 @@ class PostTargetPrompt extends Prompt<PostTargetRow[]> {
 
     const lines = [
       `${pc.cyan("◆")}  ${this.message}`,
-      `${bar}  ${pc.dim("↑/↓ move · space cycles off → as-is → LLM · enter confirm")}`,
+      `${bar}  ${pc.dim("↑/↓ move · space cycles off → as-is → LLM · shift+A disable all · enter confirm")}`,
     ];
     for (const [rowIndex, row] of this.rows.entries()) {
       const focused = rowIndex === this.index;

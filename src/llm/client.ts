@@ -36,7 +36,7 @@ const PLAN_JSON_SCHEMA = {
 } as const;
 
 // Anthropic models known to support structured outputs (output_config.format).
-// The default `claude-sonnet-4-5` is NOT among them, so it stays prompt-only.
+// Models not in this list (e.g. the legacy claude-sonnet-4-5) stay prompt-only.
 const ANTHROPIC_STRUCTURED_OUTPUT_MODELS = [
   "opus-4-8",
   "opus-4-7",
@@ -130,7 +130,7 @@ export function createLlmClient(config: LlmConfig = {}): LlmClient {
   if (provider === "anthropic") {
     const apiKey = optionalSecret(config.apiKey);
     const authToken = optionalSecret(config.authToken);
-    const model = config.model ?? "claude-sonnet-4-5";
+    const model = config.model ?? "claude-sonnet-4-6";
     if (!apiKey && !authToken) {
       throw new Error(
         "Missing Anthropic API key or auth token. Run usp setup to store one."

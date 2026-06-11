@@ -14,14 +14,14 @@ export const LLM_DEFAULTS: Record<LlmProvider, { model: string; keyUrl: string; 
     label: "OpenAI",
   },
   anthropic: {
-    model: "claude-sonnet-4-5",
+    model: "claude-sonnet-4-6",
     keyUrl: "https://console.anthropic.com/settings/keys",
     label: "Anthropic",
   },
 };
 
 const MODEL_SUGGESTIONS: Record<LlmProvider, string[]> = {
-  anthropic: ["claude-opus-4-8", "claude-sonnet-4-5", "claude-haiku-4-5"],
+  anthropic: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"],
   openai: ["gpt-5.4", "gpt-5.4-mini"],
   gemini: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
 };

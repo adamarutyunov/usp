@@ -12,6 +12,10 @@ function press(input: PassThrough, sequence: string | undefined, name: string) {
   input.emit("keypress", sequence, { name, sequence });
 }
 
+function shiftA(input: PassThrough) {
+  input.emit("keypress", "A", { name: "a", shift: true, sequence: "A" });
+}
+
 function makeRows(): PostTargetRow[] {
   return [
     { id: "x-main", platform: "x", account: "main", mode: "off" },
@@ -53,6 +57,54 @@ describe("pickPostTargets", () => {
 
     const result = (await promise) as PostTargetRow[];
     expect(result[0]!.mode).toBe("llm");
+  });
+
+  it("disables all targets with shift+A", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    output.resume();
+
+    const promise = pickPostTargets(makeRows(), { input, output });
+    await tick();
+
+    shiftA(input); // shift+A → all off
+    press(input, "\r", "return");
+
+    const result = (await promise) as PostTargetRow[];
+    expect(result.map((row) => row.mode)).toEqual(["off", "off"]);
+  });
+
+  it("restores prior modes on a second shift+A when nothing changed", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    output.resume();
+
+    const promise = pickPostTargets(makeRows(), { input, output });
+    await tick();
+
+    shiftA(input); // disable all
+    shiftA(input); // undo → back to off, llm
+    press(input, "\r", "return");
+
+    const result = (await promise) as PostTargetRow[];
+    expect(result.map((row) => row.mode)).toEqual(["off", "llm"]);
+  });
+
+  it("disables again (no undo) when a mode changed after shift+A", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    output.resume();
+
+    const promise = pickPostTargets(makeRows(), { input, output });
+    await tick();
+
+    shiftA(input); // disable all
+    press(input, " ", "space"); // row 0 off -> as-is (invalidates undo)
+    shiftA(input); // disables all again rather than restoring
+    press(input, "\r", "return");
+
+    const result = (await promise) as PostTargetRow[];
+    expect(result.map((row) => row.mode)).toEqual(["off", "off"]);
   });
 
   it("returns null on ctrl+c", async () => {

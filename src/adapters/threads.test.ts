@@ -28,20 +28,34 @@ describe("publishToThreads", () => {
   it("creates and publishes a reply chain", async () => {
     const originalFetch = globalThis.fetch;
     const bodies: URLSearchParams[] = [];
-    let call = 0;
-    globalThis.fetch = vi.fn(async (_url, init) => {
-      bodies.push(init?.body as URLSearchParams);
-      call += 1;
-      if (call === 1) {
-        return new Response(JSON.stringify({ id: "container-1" }), { status: 200 });
+    let containers = 0;
+    let posts = 0;
+    globalThis.fetch = vi.fn(async (url, init) => {
+      const target = String(url);
+      // Only the POST calls (container create / publish) carry a body we assert on.
+      if (init?.body) {
+        bodies.push(init.body as URLSearchParams);
       }
-      if (call === 2) {
-        return new Response(JSON.stringify({ id: "post-1", permalink: "https://threads.net/@u/post/1" }), { status: 200 });
+      if (target.includes("/threads_publish")) {
+        posts += 1;
+        return new Response(
+          JSON.stringify({ id: `post-${posts}`, permalink: `https://threads.net/@u/post/${posts}` }),
+          { status: 200 }
+        );
       }
-      if (call === 3) {
-        return new Response(JSON.stringify({ id: "container-2" }), { status: 200 });
+      if (target.includes("/threads")) {
+        containers += 1;
+        return new Response(JSON.stringify({ id: `container-${containers}` }), { status: 200 });
       }
-      return new Response(JSON.stringify({ id: "post-2", permalink: "https://threads.net/@u/post/2" }), { status: 200 });
+      // GET poll for container status: always FINISHED.
+      if (target.includes("fields=status")) {
+        return new Response(JSON.stringify({ status: "FINISHED" }), { status: 200 });
+      }
+      // GET poll: parent post is retrievable, and permalink lookup.
+      return new Response(
+        JSON.stringify({ id: "post-1", permalink: "https://threads.net/@u/post/1" }),
+        { status: 200 }
+      );
     }) as typeof fetch;
 
     try {

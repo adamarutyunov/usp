@@ -226,9 +226,12 @@ async function readSocialAuthConfig(): Promise<JsonObject> {
   return merged;
 }
 
-export async function findProjectConfig(cwd = process.cwd()) {
+// The project config (targets tree, profiles) is resolved from the home directory only —
+// never the current working directory. `usp` is a personal tool, so its config follows the
+// user across projects rather than being picked up from whatever directory it runs in.
+export async function findProjectConfig(dir = os.homedir()) {
   for (const name of DEFAULT_CONFIG_NAMES) {
-    const candidate = path.join(cwd, name);
+    const candidate = path.join(dir, name);
     try {
       await fs.access(candidate);
       return candidate;
@@ -247,9 +250,10 @@ export async function loadConfig(options: {
   const cwd = options.cwd ?? process.cwd();
   const globalConfig = await readYamlIfExists(getGlobalConfigPath());
   const socialAuthConfig = await readSocialAuthConfig();
+  // Explicit --config is resolved relative to cwd; auto-discovery only looks in the home dir.
   const projectPath = options.configPath
     ? path.resolve(cwd, options.configPath)
-    : await findProjectConfig(cwd);
+    : await findProjectConfig();
   const projectConfig = projectPath ? await readYamlIfExists(projectPath) : {};
 
   const migratedGlobal = migrateFlatConfig(globalConfig as UspConfig);
@@ -278,6 +282,11 @@ export async function loadGlobalConfig(): Promise<UspConfig> {
 
 export async function loadSocialAuthConfig(): Promise<UspConfig> {
   return (await readSocialAuthConfig()) as UspConfig;
+}
+
+/** Read a single per-platform social-auth file (e.g. threads.yml) for read-modify-write updates. */
+export async function readSocialAuthFile(platform: string): Promise<UspConfig> {
+  return (await readYamlIfExists(path.join(getSocialAuthDir(), `${platform}.yml`))) as UspConfig;
 }
 
 export async function loadProjectConfig(configPath?: string): Promise<{ path: string; config: UspConfig } | undefined> {
@@ -312,7 +321,8 @@ export async function writeSocialAuthConfig(fileName: string, config: UspConfig)
 }
 
 export async function writeProjectConfig(config: UspConfig, filePath = ".usp.yml") {
-  const resolved = path.resolve(process.cwd(), filePath);
+  // Project config lives in the home directory (matching findProjectConfig's discovery).
+  const resolved = path.resolve(os.homedir(), filePath);
   await fs.writeFile(resolved, YAML.stringify(config));
   return resolved;
 }

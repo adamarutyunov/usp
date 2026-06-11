@@ -18,7 +18,7 @@ Legend: ✅ supported, 🚧 WIP, ❌ not supported, — n/a.
 | [X](https://x.com/) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | [Developer portal](https://developer.x.com/en/portal/dashboard) |
 | [LinkedIn](https://www.linkedin.com/) | ✅ | ✅ | 🚧 | ✅ | ✅ | — | [Developer apps](https://www.linkedin.com/developers/apps) |
 | [Reddit](https://www.reddit.com/) | ✅ | ❌ | — | ✅ | ✅ | — | [OAuth apps](https://www.reddit.com/prefs/apps) |
-| [Telegram](https://telegram.org/) | ✅ | ✅ | ✅ | — | ✅ | — | [BotFather](https://t.me/BotFather) |
+| [Telegram](https://telegram.org/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | [BotFather](https://t.me/BotFather) |
 | [Bluesky](https://bsky.app/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | [App passwords](https://bsky.app/settings/app-passwords) |
 | [Mastodon](https://mastodon.social/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | [New application](https://mastodon.social/settings/applications/new) |
 | [Discord](https://discord.com/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | Channel webhook |
@@ -33,7 +33,7 @@ Reddit posts via the OAuth submit endpoint (self-posts), so local images are lin
 curl -fsSL https://raw.githubusercontent.com/adamarutyunov/usp/main/install.sh | sh   # VERSION=v0.1.0 to pin
 ```
 
-Or `npm install -g usp && npx playwright install chromium`. The installer also pulls Playwright Chromium; install Google Chrome for `usp login`.
+Or `pnpm add -g usp && pnpx playwright install chromium`. The installer also pulls Playwright Chromium; install Google Chrome for `usp login`.
 
 <!-- SCREENSHOT: interactive target tree -->
 
@@ -45,7 +45,7 @@ usp login x            # only for browser-backed platforms (X today); API platfo
 usp publish ./post.md
 ```
 
-`usp setup` writes credentials to `~/.config/usp/social-auth/` and routing to a project `.usp.yml`.
+`usp setup` writes credentials to `~/.config/usp/social-auth/` and routing to `~/.usp.yml`.
 
 ## Usage
 
@@ -88,10 +88,12 @@ Merged in order, later wins:
 
 ```text
 ~/.config/usp/config.yml          # global
-./.usp.yml (or usp.config.yml)     # project: accounts, targets, profiles
+~/.usp.yml (or ~/usp.config.yml)   # project: accounts, targets, profiles
 ~/.config/usp/social-auth/*.yml    # credentials (setup writes these)
 --set key.path=value               # per-invocation override
 ```
+
+Auto-discovery only looks in your home directory — never the current working directory. Pass `--config <path>` to point at a file explicitly (resolved relative to cwd).
 
 ### Platform → account → target
 
@@ -104,7 +106,7 @@ Reddit (`subreddit`), Telegram (`chatId`), and Discord (`threadId`) route to mul
 ```yaml
 llm:
   provider: anthropic
-  model: claude-sonnet-4-5
+  model: claude-sonnet-4-6
 
 accounts:
   x:
@@ -153,6 +155,14 @@ postingDefaults:                # off | as-is | llm, per target
   telegram/newsbot/en: as-is
 ```
 
+### Local media on URL-only platforms
+
+X, Telegram, Bluesky, Mastodon, Discord, and Aegea upload local image files directly. **Threads and Reddit** can't — they only accept a public URL — so local images are skipped there by default. Enable hosting (in `usp setup` → **Media hosting**, or `uploadLocalMedia: true`) and `usp` uploads each local image to a temporary anonymous host ([litterbox](https://litterbox.catbox.moe/), ~1h expiry, no account) and uses that URL, so images work on Threads and in Reddit posts. The image bytes briefly transit that third-party host.
+
+```yaml
+uploadLocalMedia: true          # host local images for Threads / Reddit
+```
+
 ### Environment variables
 
 Blank credentials fall back to env vars by convention; config values win. Accounts use `PLATFORM_FIELD` (`PLATFORM_ACCOUNT_FIELD` takes precedence for multi-account), the LLM uses `PROVIDER_API_KEY` / `PROVIDER_AUTH_TOKEN`.
@@ -199,7 +209,7 @@ App password + AT Protocol (`identifier`, `appPassword`, `pdsUrl`). Multi-unit p
 Incoming webhook (one channel, no bot). One webhook = one account; `threadId` per target. `username`/`avatarUrl` optional.
 
 ### Threads
-Meta Graph API with `threads_basic`, `threads_content_publish`. Remote media only.
+Meta Graph API with `threads_basic`, `threads_content_publish`. Only accepts public media URLs; local images need **Media hosting** enabled (see [Local media on URL-only platforms](#local-media-on-url-only-platforms)). Short-lived tokens are auto-exchanged for long-lived ones at setup and refreshed before publish.
 
 ## CLI Reference
 
@@ -207,7 +217,7 @@ Shared by `plan` / `preview` / `publish` / `browser:post`:
 
 | Option | |
 | --- | --- |
-| `-c, --config <path>` | config file (default `.usp.yml`/`usp.config.yml` in cwd) |
+| `-c, --config <path>` | config file (auto-discovered as `~/.usp.yml`/`~/usp.config.yml`) |
 | `-p, --profile <name>` | profile to publish (default `default`) |
 | `-t, --target <id>` | target id, repeatable; skips the picker |
 | `--set <key.path=value>` | config override, repeatable |
@@ -264,8 +274,8 @@ jobs:
 
 ```sh
 git clone https://github.com/adamarutyunov/usp && cd usp
-npm install && npm run build && npm link
-npx playwright install chromium
+pnpm install && pnpm build && pnpm link --global
+pnpm exec playwright install chromium
 ```
 
 ## License

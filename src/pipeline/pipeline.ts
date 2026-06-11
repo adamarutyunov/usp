@@ -176,8 +176,12 @@ export class PublishPipeline {
     }
 
     // Dedup identical plans: by target id under preview (each has its own file),
-    // otherwise by platform+postMode so same-platform targets share one LLM call.
+    // otherwise by platform+postMode+prompt. The per-target prompt MUST be in the key —
+    // two targets on one account with different prompts (e.g. an English and a Russian
+    // tweet) generate different text, and sharing a plan would post duplicate content.
     const planMemo = new Map<string, Promise<PlatformPlan>>();
+    const planKey = (target: TargetRef) =>
+      `${target.config.platform}:${target.postMode ?? "llm"}:${JSON.stringify(target.config.prompt ?? null)}`;
 
     // Resolve a target's plan and the media it should post with. For a reused
     // preview that's the (possibly edited) Markdown plus any images the user added;
@@ -191,7 +195,7 @@ export class PublishPipeline {
         }
       }
 
-      const key = previewActive ? target.id : `${target.config.platform}:${target.postMode ?? "llm"}`;
+      const key = previewActive ? target.id : planKey(target);
       let pending = planMemo.get(key);
       if (!pending) {
         pending = this.planner.plan({ input, target, config });

@@ -97,6 +97,8 @@ export type DiscordAccount = {
 
 export type ThreadsAccount = {
   accessToken?: SecretValue;
+  /** ISO timestamp when accessToken expires; set when usp exchanges/refreshes a long-lived token. */
+  accessTokenExpiresAt?: string;
   userId?: string;
   username?: string;
   replyControl?: "everyone" | "followers" | "mentioned_only";
@@ -154,6 +156,12 @@ export type UspConfig = {
   /** Layer 2 overrides, one per platform. */
   prompts?: Partial<Record<Platform, PromptLayer>>;
   postingDefaults?: Record<string, PostMode>;
+  /**
+   * When true, local images for URL-only platforms (Threads, Reddit self-posts) are
+   * uploaded to a temporary public host so those platforms can fetch them. Opt-in: the
+   * image bytes briefly transit a third-party host.
+   */
+  uploadLocalMedia?: boolean;
 };
 
 export type SourceMedia = {

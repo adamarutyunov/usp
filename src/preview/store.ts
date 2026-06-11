@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { extractImages, loadMedia } from "../content/markdown.js";
+import { extractImages, loadMedia, localFsPath } from "../content/markdown.js";
 import type { MarkdownInput, PlatformPlan, SourceMedia, TargetConfig } from "../types.js";
 
 export type PreviewPlan = {
@@ -43,18 +43,20 @@ function previewDirFor(inputPath: string) {
 function serializePlan(plan: PlatformPlan, media: SourceMedia[], target: PreviewTarget): string {
   const byId = new Map(media.map((item) => [item.id, item]));
   const header =
-    `<!-- usp preview — ${target.config.platform}/${target.config.account}/${target.id}. ` +
+    `<!-- usp preview — ${target.id}. ` +
     `Edit freely; separate posts with a line of dashes (${POST_SEPARATOR}). ` +
     `A leading "# " line is the optional title. HTML comments are ignored when posting. -->`;
   const blocks = plan.units.map((unit) => {
-    const parts: string[] = [];
-    if (unit.text.trim()) {
-      parts.push(unit.text.trim());
-    }
+    const text = unit.text.trim();
+    const parts: string[] = text ? [text] : [];
+    // Don't re-append an image that's already inline in the text (as-is bodies keep
+    // their Markdown images), and don't repeat the same image twice.
+    const seen = new Set(extractImages(text).images.map((image) => image.path));
     for (const ref of unit.mediaRefs ?? []) {
       const item = byId.get(ref);
-      if (item) {
+      if (item && !seen.has(item.rawPath)) {
         parts.push(`![${item.alt}](${item.rawPath})`);
+        seen.add(item.rawPath);
       }
     }
     return parts.join("\n\n");
@@ -100,7 +102,7 @@ function parsePlan(markdown: string, sourceMedia: SourceMedia[], baseDir: string
       id: `preview-img${(newMediaCount += 1)}`,
       alt: image.alt,
       rawPath: image.path,
-      resolvedPath: isRemotePath(image.path) ? image.path : path.resolve(baseDir, image.path),
+      resolvedPath: isRemotePath(image.path) ? image.path : localFsPath(image.path, baseDir),
       isRemote: isRemotePath(image.path),
     };
     mediaByPath.set(image.path, item);
@@ -140,7 +142,8 @@ export class PreviewSession {
   }
 
   filePath(target: PreviewTarget) {
-    const base = safeSegment(`${target.config.platform}-${target.config.account}-${target.id}`);
+    // target.id is already the full `platform/account/name`, so it alone is unique.
+    const base = safeSegment(target.id);
     return path.join(this.dir, `${base}.md`);
   }
 

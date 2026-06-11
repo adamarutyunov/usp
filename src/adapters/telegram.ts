@@ -38,8 +38,34 @@ async function callTelegram(botToken: string, method: string, body: FormData | R
   return data;
 }
 
-function postFromResult(data: TelegramResult, text: string): PublishPost {
-  return { id: String(data.result?.message_id ?? ""), text };
+/**
+ * Build a public message link when possible: `@handle` channels map to
+ * t.me/<handle>/<id>, and numeric `-100…` channels/supergroups to t.me/c/<id>/<msg>.
+ * Basic groups and private chats have no public link.
+ */
+function telegramPostUrl(chatId: string, messageId: number | undefined): string | undefined {
+  if (messageId === undefined) {
+    return undefined;
+  }
+  const trimmed = chatId.trim();
+  const handle = trimmed.replace(/^@/, "");
+  if (/^[a-zA-Z][\w]*$/.test(handle)) {
+    return `https://t.me/${handle}/${messageId}`;
+  }
+  const channel = trimmed.match(/^-100(\d+)$/);
+  if (channel) {
+    return `https://t.me/c/${channel[1]}/${messageId}`;
+  }
+  return undefined;
+}
+
+function postFromResult(data: TelegramResult, text: string, chatId: string): PublishPost {
+  const messageId = data.result?.message_id;
+  return {
+    id: messageId !== undefined ? String(messageId) : "",
+    url: telegramPostUrl(chatId, messageId),
+    text,
+  };
 }
 
 export async function publishToTelegram(context: PublishContext) {
@@ -62,7 +88,7 @@ export async function publishToTelegram(context: PublishContext) {
         text: unit.text,
         disable_web_page_preview: false,
       });
-      return postFromResult(data, unit.text);
+      return postFromResult(data, unit.text, chatId);
     }
 
     if (media.length === 1) {
@@ -76,7 +102,7 @@ export async function publishToTelegram(context: PublishContext) {
         form.append("photo", mediaBlob(item, "telegram"), path.basename(item.resolvedPath));
       }
       const data = await callTelegram(botToken, "sendPhoto", form);
-      return postFromResult(data, unit.text);
+      return postFromResult(data, unit.text, chatId);
     }
 
     const form = new FormData();
@@ -92,7 +118,7 @@ export async function publishToTelegram(context: PublishContext) {
     });
     form.set("media", JSON.stringify(mediaPayload));
     const data = await callTelegram(botToken, "sendMediaGroup", form);
-    return postFromResult(data, unit.text);
+    return postFromResult(data, unit.text, chatId);
   });
 
   return publishResult(context, posts);

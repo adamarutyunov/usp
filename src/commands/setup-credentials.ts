@@ -1,4 +1,5 @@
 import { note, password, select, text } from "@clack/prompts";
+import { exchangeForLongLivedToken } from "../adapters/threads-tokens.js";
 import type { Platform } from "../types.js";
 
 export type OrBack = <T>(value: T | symbol) => T;
@@ -44,10 +45,11 @@ async function configureLinkedIn(account: Record<string, unknown>, orBack: OrBac
 async function configureReddit(account: Record<string, unknown>, orBack: OrBack) {
   note(
     [
-      "Create a Reddit OAuth app. Script apps are simplest for personal testing.",
-      "App console: https://www.reddit.com/prefs/apps",
-      "Use OAuth scope: submit. Prefer a refresh token for CI.",
-      "Subreddits are set per target, not on the account.",
+      "At https://www.reddit.com/prefs/apps choose the 'script' app type (NOT Devvit).",
+      "redirect uri can be http://localhost:8080 (unused for script apps).",
+      "client id is under the app name; secret is the 'secret' field.",
+      "Provide client id + secret and your username + password (the posting account),",
+      "or a refresh token for CI. Subreddits are set per target, not on the account.",
     ].join("\n"),
     "Reddit credentials"
   );
@@ -207,21 +209,48 @@ async function configureDiscord(account: Record<string, unknown>, orBack: OrBack
 async function configureThreads(account: Record<string, unknown>, orBack: OrBack) {
   note(
     [
-      "Create a Meta app with the Threads use case and request Threads publishing access.",
-      "Required scopes include threads_basic and threads_content_publish.",
-      "The user id can be left as me for the token owner.",
+      "The access token is a generated Threads USER token — not the app ID or secret.",
+      "",
+      "1. Create a Meta app with the 'Access the Threads API' use case:",
+      "   https://developers.facebook.com/apps/",
+      "2. In that use case, add the threads_content_publish permission (threads_basic",
+      "   is included), then finish customization.",
+      "3. Add your Threads account as a tester: App roles > Roles > add a Threads Tester.",
+      "   Then APPROVE the request in the Threads mobile app:",
+      "   Settings > Account > Website permissions > Invites.",
+      "4. Open Tools > Graph API Explorer and set the API dropdown to threads.net.",
+      "5. Click 'Generate Threads Access Token', pick your Threads account, and approve",
+      "   threads_basic and threads_content_publish.",
+      "6. Paste that token below.",
     ].join("\n"),
     "Threads credentials"
   );
 
-  account.accessToken = orBack(await password({ message: "Threads access token" }));
-  account.userId = orBack(
-    await text({
-      message: "Threads user id",
-      placeholder: "me",
-      defaultValue: typeof account.userId === "string" ? account.userId : "me",
+  const shortToken = orBack(await password({ message: "Threads access token" }));
+  account.accessToken = shortToken;
+  delete account.accessTokenExpiresAt;
+
+  const appSecret = orBack(
+    await password({
+      message: "Threads app secret (App settings > Basic) — to auto-exchange for a 60-day token; leave empty to skip",
     })
-  );
+  ).trim();
+  if (appSecret) {
+    try {
+      const { accessToken, expiresAt } = await exchangeForLongLivedToken(shortToken, appSecret);
+      account.accessToken = accessToken;
+      account.accessTokenExpiresAt = expiresAt;
+      note(
+        `Exchanged for a long-lived token (expires ${new Date(expiresAt).toLocaleDateString()}). usp auto-refreshes it on publish.`,
+        "Threads token"
+      );
+    } catch (error) {
+      note(`Could not exchange the token: ${(error as Error).message}\nStored the pasted token as-is.`, "Threads token");
+    }
+  }
+
+  // No user id prompt: a Threads user token only ever acts on its owner, and the API
+  // accepts "me" for that — which is the adapter's default.
   account.replyControl = orBack(
     await select({
       message: "Who can reply",

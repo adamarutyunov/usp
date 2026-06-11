@@ -16,7 +16,7 @@ function input(dir: string, media: SourceMedia[] = []): MarkdownInput {
   };
 }
 
-const target = { id: "main", config: { platform: "reddit" as const, account: "main" } };
+const target = { id: "reddit/main/blog", config: { platform: "reddit" as const, account: "main" } };
 
 describe("PreviewStore Markdown round-trip", () => {
   it("writes a .md file in a sibling <name>.usp-preview folder", async () => {
@@ -25,7 +25,7 @@ describe("PreviewStore Markdown round-trip", () => {
     await session.write(target, { units: [{ text: "hello" }] });
 
     expect(session.dir).toBe(path.join(dir, "post.usp-preview"));
-    await expect(fs.readdir(session.dir)).resolves.toEqual(["reddit-main-main.md"]);
+    await expect(fs.readdir(session.dir)).resolves.toEqual(["reddit-main-blog.md"]);
   });
 
   it("round-trips title, multiple posts, and inline media", async () => {
@@ -71,6 +71,19 @@ describe("PreviewStore Markdown round-trip", () => {
     const back = await session.read(target);
     expect(back?.plan.title).toBe("Hand Title");
     expect(back?.plan.units.map((unit) => unit.text)).toEqual(["first", "second"]);
+  });
+
+  it("does not duplicate an image already inline in the post text (as-is)", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "usp-store-"));
+    const media: SourceMedia[] = [
+      { id: "img1", alt: "pic", rawPath: "./a.png", resolvedPath: "/x/a.png", isRemote: false, data: Buffer.from("x") },
+    ];
+    const session = new PreviewStore().open(input(dir, media));
+    // as-is style: the body text already contains the image, and mediaRefs also references it.
+    await session.write(target, { units: [{ text: "body\n\n![pic](./a.png)", mediaRefs: ["img1"] }] });
+
+    const raw = await fs.readFile(session.filePath(target), "utf8");
+    expect(raw.match(/!\[pic\]\(\.\/a\.png\)/g) ?? []).toHaveLength(1);
   });
 
   it("loads a new local image added in the edited preview", async () => {

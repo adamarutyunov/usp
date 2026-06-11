@@ -87,6 +87,10 @@ export const PLATFORM_METADATA: Record<Platform, PlatformMetadata> = {
   },
 };
 
+// Platforms that publish a multi-post reply chain (a thread). Used both for the LLM
+// thread rules and for showing only the first post's link in the publish summary.
+export const THREAD_PLATFORMS: ReadonlySet<Platform> = new Set(["x", "bluesky", "mastodon", "threads"]);
+
 export function isPlatform(value: string): value is Platform {
   return (PLATFORMS as readonly string[]).includes(value);
 }

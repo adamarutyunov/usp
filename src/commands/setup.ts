@@ -21,7 +21,7 @@ import {
 } from "../config/config.js";
 import { BASE_GUIDANCE, DEFAULT_PLATFORM_PROMPTS } from "../llm/prompts.js";
 import { PLATFORM_METADATA, PLATFORMS, isPlatform } from "../platforms.js";
-import type { Platform, TargetRouting, UspConfig } from "../types.js";
+import type { Platform, PostMode, TargetRouting, UspConfig } from "../types.js";
 import { SAMPLE_CONFIG } from "./init.js";
 import { pickPostTargets, type PostTargetRow } from "./post-picker.js";
 import { configureCredentials, deriveAccountName } from "./setup-credentials.js";
@@ -388,9 +388,24 @@ async function addTargetFlow(project: UspConfig, projectPath: string, platform: 
     target.prompt = { mode: "append", text: promptText };
   }
 
+  const mode = orBack(
+    await select({
+      message: "Default posting mode",
+      options: [
+        { value: "llm", label: "LLM", hint: "Rewrite for the platform" },
+        { value: "as-is", label: "As-is", hint: "Post the raw Markdown" },
+        { value: "off", label: "Off", hint: "Skip unless selected" },
+      ],
+    })
+  ) as PostMode;
+
   projectAccount(project, platform, accountName).targets[name] = target;
   rebuildDefaultProfile(project);
   await writeConfigFile(projectPath, project);
+
+  const global = await loadGlobalConfig();
+  global.postingDefaults = { ...(global.postingDefaults ?? {}), [fullTargetId(platform, accountName, name)]: mode };
+  await writeGlobalConfig(global);
 }
 
 async function manageTargetNode(socialAuth: UspConfig, project: UspConfig, projectPath: string, platform: Platform, account: string, targetName: string) {
@@ -545,6 +560,37 @@ async function configureGlobalPrompt() {
   note("Global prompt saved.", "Saved");
 }
 
+async function configureMediaHosting() {
+  const global = await loadGlobalConfig();
+  note(
+    [
+      "Threads and Reddit can't upload local image files — they only accept a public URL,",
+      "so usp normally skips local images on those platforms.",
+      "",
+      "Enable this and usp uploads each local image to a temporary public host (litterbox:",
+      "anonymous, no account, ~1h expiry), then uses that URL — so the image appears on",
+      "Threads and in Reddit posts. Other platforms (X, Telegram, …) upload directly and",
+      "are unaffected.",
+      "",
+      "Trade-off: the image bytes briefly transit a third-party host.",
+    ].join("\n"),
+    "Media hosting"
+  );
+  const choice = orBack(
+    await select({
+      message: "Host local images for Threads / Reddit?",
+      initialValue: global.uploadLocalMedia ? "on" : "off",
+      options: [
+        { value: "on", label: "Enabled", hint: "upload local images to a temporary host" },
+        { value: "off", label: "Disabled", hint: "skip local images on those platforms" },
+      ],
+    })
+  ) as "on" | "off";
+  global.uploadLocalMedia = choice === "on";
+  await writeGlobalConfig(global);
+  note(`Media hosting ${global.uploadLocalMedia ? "enabled" : "disabled"}.`, "Saved");
+}
+
 async function configurePostingDefaults(socialAuth: UspConfig, project: UspConfig) {
   const global = await loadGlobalConfig();
   // Build the same target list publish sees: only explicitly-configured targets.
@@ -583,7 +629,7 @@ async function runInteractiveSetup() {
 
   let lastSection: string | undefined;
   for (;;) {
-    let section: "llm" | "targets" | "prompts" | "posting" | "exit";
+    let section: "llm" | "targets" | "prompts" | "posting" | "media" | "exit";
     try {
       section = orBack(
         await select({
@@ -594,10 +640,15 @@ async function runInteractiveSetup() {
             { value: "llm", label: "LLM provider", hint: llmStatus(project, socialAuth) },
             { value: "prompts", label: "Global prompt", hint: "global rules appended to every prompt" },
             { value: "posting", label: "Default posting", hint: "per-target defaults for the publish picker" },
+            {
+              value: "media",
+              label: "Media hosting",
+              hint: "enable local image upload to Threads / Reddit via third-party service",
+            },
             { value: "exit", label: "Exit" },
           ],
         })
-      ) as "llm" | "targets" | "prompts" | "posting" | "exit";
+      ) as "llm" | "targets" | "prompts" | "posting" | "media" | "exit";
       lastSection = section;
     } catch (error) {
       // Cancelling the top-level menu exits the wizard (saving first).
@@ -632,6 +683,11 @@ async function runInteractiveSetup() {
 
       if (section === "posting") {
         await configurePostingDefaults(socialAuth, project);
+        continue;
+      }
+
+      if (section === "media") {
+        await configureMediaHosting();
         continue;
       }
 

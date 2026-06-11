@@ -1,9 +1,13 @@
 import { cancel, confirm, isCancel, select } from "@clack/prompts";
+import { addDays, isBefore } from "date-fns";
 import pc from "yoctocolors";
+import { refreshLongLivedToken } from "../adapters/threads-tokens.js";
 import {
 	loadConfig,
 	loadGlobalConfig,
+	readSocialAuthFile,
 	writeGlobalConfig,
+	writeSocialAuthConfig,
 } from "../config/config.js";
 import {
 	MarkdownFileInputSource,
@@ -21,7 +25,8 @@ import {
 	ConfigPromptProvider,
 	parsePromptOverride,
 } from "../prompt/provider.js";
-import type { PostMode, PublishTargetResult } from "../types.js";
+import { THREAD_PLATFORMS } from "../platforms.js";
+import type { PostMode, PublishTargetResult, ThreadsAccount } from "../types.js";
 import { platformName, printError } from "../util/display.js";
 import { StatusBoard } from "../util/status-board.js";
 import { type PostTargetRow, pickPostTargets } from "./post-picker.js";
@@ -147,12 +152,17 @@ function createHumanHooks(mode: "publish" | "preview") {
 }
 
 function printPublishSummary(results: PublishTargetResult[]) {
+	// Grey rule separating the live in-flight statuses above from the final overview below.
+	console.log("");
+	console.log(pc.gray("_".repeat(Math.min(process.stdout.columns ?? 48, 48))));
 	console.log("");
 	for (const result of results.filter((entry) => entry.ok)) {
 		console.log(
 			pc.green(`✅ ${platformName(result.platform)} (${result.target})`),
 		);
-		for (const post of result.posts) {
+		// Thread platforms post a reply chain; only the first post's link is the entry point.
+		const links = THREAD_PLATFORMS.has(result.platform) ? result.posts.slice(0, 1) : result.posts;
+		for (const post of links) {
 			if (post.url ?? post.id) {
 				console.log(`   ${post.url ?? post.id}`);
 			}
@@ -327,6 +337,52 @@ async function resolvePublishTargets(
 	return ready.map((target) => ({ ...target, postMode: "llm" as PostMode }));
 }
 
+// Long-lived Threads tokens last ~60 days; refresh once they drop under this so they never lapse.
+const THREADS_REFRESH_WHEN_REMAINING_DAYS = 30;
+
+/**
+ * Keep Threads long-lived tokens alive: refresh any that are nearing expiry, update the
+ * in-memory config for this run, and persist the new token back to social-auth. Best-effort —
+ * a refresh failure (e.g. token under 24h old, or revoked) leaves the existing token in place.
+ */
+async function refreshThreadsTokens(config: Awaited<ReturnType<typeof loadConfig>>) {
+	const accounts = config.accounts?.threads;
+	if (!accounts) {
+		return;
+	}
+	const cutoff = addDays(new Date(), THREADS_REFRESH_WHEN_REMAINING_DAYS);
+	const stale = Object.entries(accounts).filter(([, account]) => {
+		const threads = account as ThreadsAccount;
+		return (
+			threads.accessToken &&
+			threads.accessTokenExpiresAt &&
+			isBefore(new Date(threads.accessTokenExpiresAt), cutoff)
+		);
+	});
+	if (stale.length === 0) {
+		return;
+	}
+
+	const file = await readSocialAuthFile("threads");
+	const fileThreads = (((file.accounts ??= {}).threads ??= {}) as Record<string, ThreadsAccount>);
+	let changed = false;
+	for (const [name, account] of stale) {
+		const threads = account as ThreadsAccount;
+		try {
+			const { accessToken, expiresAt } = await refreshLongLivedToken(threads.accessToken!);
+			threads.accessToken = accessToken;
+			threads.accessTokenExpiresAt = expiresAt;
+			fileThreads[name] = { ...(fileThreads[name] ?? {}), accessToken, accessTokenExpiresAt: expiresAt };
+			changed = true;
+		} catch {
+			// Keep the existing token; token maintenance must never block publishing.
+		}
+	}
+	if (changed) {
+		await writeSocialAuthConfig("threads", file);
+	}
+}
+
 async function runPublishFlow(
 	file: string | undefined,
 	options: PublishOptions,
@@ -336,6 +392,11 @@ async function runPublishFlow(
 		configPath: options.config,
 		overrides: options.set,
 	});
+	try {
+		await refreshThreadsTokens(config);
+	} catch {
+		// Token maintenance is best-effort and must not block publishing.
+	}
 	const locallyReady = await resolvePublishTargets(config, options, mode);
 	const pipeline = createPipeline(file, options, config);
 	const previewStore = new PreviewStore();
