@@ -13,6 +13,16 @@ import {
 
 const LINKEDIN_MAX_CHARS = 3000;
 
+// LinkedIn's Posts API commentary uses "Little Text Format": these characters are reserved
+// and MUST be backslash-escaped, or LinkedIn truncates the post at the first unescaped one.
+// We escape them all so the text posts verbatim as plaintext (no mentions/hashtag entities).
+// https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/little-text-format
+const LITTLE_TEXT_RESERVED = /[\\|{}@[\]()<>#*_~]/g;
+
+function escapeLittleText(text: string): string {
+  return text.replace(LITTLE_TEXT_RESERVED, "\\$&");
+}
+
 type LinkedInImageInit = {
   value?: {
     uploadUrl?: string;
@@ -92,7 +102,7 @@ export async function publishToLinkedIn(context: PublishContext) {
 
     const body: Record<string, unknown> = {
       author: account.author,
-      commentary: unit.text,
+      commentary: escapeLittleText(unit.text),
       visibility: "PUBLIC",
       distribution: {
         feedDistribution: "MAIN_FEED",

@@ -8,7 +8,10 @@ import mime from "mime";
 import type { MarkdownInput, SourceMedia } from "../types.js";
 import { fetchWithTimeout } from "../util/http.js";
 
-const IMAGE_PATTERN = /!\[([^\]]*)\]\(\s*(<[^>\n]+>|[^\s)]+)(?:\s+"[^"]*")?\s*\)/g;
+// The path group accepts spaces (e.g. "Screenshot 2026-06-12 at 10.png" — macOS names
+// screenshots that way) by matching lazily up to an optional "title" and the closing paren,
+// while still supporting an explicit <bracketed path>.
+const IMAGE_PATTERN = /!\[([^\]]*)\]\(\s*(<[^>\n]+>|[^)]*?)(?:\s+"[^"]*")?\s*\)/g;
 const REMOTE_IMAGE_TIMEOUT_MS = 30_000;
 const MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_MEDIA_LOAD_CONCURRENCY = 4;
