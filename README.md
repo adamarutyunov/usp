@@ -4,6 +4,8 @@
 
 `usp` publishes one Markdown file to X, LinkedIn, Reddit, Telegram, Bluesky, Mastodon, Discord, Aegea, and Threads — each target posted **as-is** or rewritten by an LLM to fit the platform.
 
+<img width="1624" height="975" alt="Screenshot 2026-06-12 at 10 32 59" src="https://github.com/user-attachments/assets/425d46e2-a4b9-4e09-93cb-1ec56b26b615" />
+
 - **One source, many platforms** — images and threads preserved.
 - **With or without AI** — raw text, or LLM-tailored per platform.
 - **Preview** the generated text for every platform before anything goes live.
