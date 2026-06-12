@@ -11,6 +11,8 @@ import {
   type PublishContext,
 } from "./common.js";
 
+const LINKEDIN_MAX_CHARS = 3000;
+
 type LinkedInImageInit = {
   value?: {
     uploadUrl?: string;
@@ -75,7 +77,14 @@ export async function publishToLinkedIn(context: PublishContext) {
   const accessToken = resolveSecret(account.accessToken, "LinkedIn access token");
   const version = account.version ?? "202602";
 
+  const warnings: string[] = [];
   const posts = await publishThread(context.plan.units, async (unit) => {
+    // LinkedIn silently hard-truncates commentary past 3000 chars — surface it instead.
+    if (unit.text.length > LINKEDIN_MAX_CHARS) {
+      warnings.push(
+        `LinkedIn post is ${unit.text.length} characters; LinkedIn truncates beyond ${LINKEDIN_MAX_CHARS}.`
+      );
+    }
     const media = getReferencedMedia(context.media, unit.mediaRefs);
     const imageUrns = await Promise.all(
       media.map((item) => uploadImage({ accessToken, version, owner: account.author, item }))
@@ -116,5 +125,5 @@ export async function publishToLinkedIn(context: PublishContext) {
     };
   });
 
-  return publishResult(context, posts);
+  return publishResult(context, posts, warnings);
 }

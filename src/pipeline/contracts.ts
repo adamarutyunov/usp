@@ -20,6 +20,8 @@ export type PipelineInput = MarkdownInput;
 
 export abstract class InputSource {
   abstract read(): Promise<PipelineInput>;
+  /** Read bytes for media. Deferred from `read()` — only a real publish needs them. */
+  abstract loadMedia(media: SourceMedia[]): Promise<SourceMedia[]>;
 }
 
 export type PromptRequest = {

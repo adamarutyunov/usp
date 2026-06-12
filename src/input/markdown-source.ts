@@ -1,7 +1,14 @@
-import { readMarkdownInput, readMarkdownText } from "../content/markdown.js";
+import { loadAllSourceMedia, readMarkdownInput, readMarkdownText } from "../content/markdown.js";
 import { InputSource, type PipelineInput } from "../pipeline/contracts.js";
+import type { SourceMedia } from "../types.js";
 
-export class MarkdownFileInputSource extends InputSource {
+abstract class MarkdownInputSource extends InputSource {
+  loadMedia(media: SourceMedia[]): Promise<SourceMedia[]> {
+    return loadAllSourceMedia(media);
+  }
+}
+
+export class MarkdownFileInputSource extends MarkdownInputSource {
   constructor(private readonly filePath: string) {
     super();
   }
@@ -11,7 +18,7 @@ export class MarkdownFileInputSource extends InputSource {
   }
 }
 
-export class MarkdownTextInputSource extends InputSource {
+export class MarkdownTextInputSource extends MarkdownInputSource {
   constructor(
     private readonly text: string,
     private readonly label = "<text>"
@@ -24,7 +31,7 @@ export class MarkdownTextInputSource extends InputSource {
   }
 }
 
-export class StdinMarkdownInputSource extends InputSource {
+export class StdinMarkdownInputSource extends MarkdownInputSource {
   async read(): Promise<PipelineInput> {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {

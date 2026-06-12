@@ -8,7 +8,7 @@ import mime from "mime";
 import type { MarkdownInput, SourceMedia } from "../types.js";
 import { fetchWithTimeout } from "../util/http.js";
 
-const IMAGE_PATTERN = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+const IMAGE_PATTERN = /!\[([^\]]*)\]\(\s*(<[^>\n]+>|[^\s)]+)(?:\s+"[^"]*")?\s*\)/g;
 const REMOTE_IMAGE_TIMEOUT_MS = 30_000;
 const MAX_REMOTE_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_MEDIA_LOAD_CONCURRENCY = 4;
@@ -201,13 +201,24 @@ async function parseMarkdownInput({
     return `[media:${id}${alt.trim() ? ` alt="${alt.trim().replaceAll('"', '\\"')}"` : ""}]`;
   });
 
+  // Note: media bytes are NOT read here. Parsing only builds the in-memory catalog
+  // (id, path, alt) so the LLM can reference images by id and place them per post.
+  // The actual file/network read is deferred to publish time (loadAllSourceMedia),
+  // so `preview` and `plan` never touch the bytes.
   return {
     inputPath,
     title: inferTitle(body),
     body,
     bodyWithMediaPlaceholders,
-    media: await mapWithConcurrency(media, MAX_MEDIA_LOAD_CONCURRENCY, loadMedia),
+    media,
   };
+}
+
+/** Read bytes for any not-yet-loaded media. Deferred from parse to the publish path. */
+export function loadAllSourceMedia(media: SourceMedia[]): Promise<SourceMedia[]> {
+  return mapWithConcurrency(media, MAX_MEDIA_LOAD_CONCURRENCY, (item) =>
+    item.data ? Promise.resolve(item) : loadMedia(item)
+  );
 }
 
 export async function readMarkdownInput(filePath: string): Promise<MarkdownInput> {

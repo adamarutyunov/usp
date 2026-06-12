@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { PreviewStore } from "../preview/store.js";
-import type { PlatformPlan, PublishTargetResult, UspConfig } from "../types.js";
+import type { PlatformPlan, PublishTargetResult, SourceMedia, UspConfig } from "../types.js";
 import { InputSource, PlatformPlanner, Poster, type PipelineInput, type PlanRequest, type PostRequest } from "./contracts.js";
 import { PublishPipeline } from "./pipeline.js";
 
@@ -15,6 +15,10 @@ class StaticInputSource extends InputSource {
 
   read() {
     return Promise.resolve(this.input);
+  }
+
+  loadMedia(media: SourceMedia[]) {
+    return Promise.resolve(media);
   }
 }
 

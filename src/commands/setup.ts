@@ -27,6 +27,7 @@ import { pickPostTargets, type PostTargetRow } from "./post-picker.js";
 import { configureCredentials, deriveAccountName } from "./setup-credentials.js";
 import { LLM_DEFAULTS, configureLlm } from "./setup-llm.js";
 import { browseTargets, pickFromList, rowKey, type TreeRow } from "./target-tree.js";
+import { enableWordNavigation } from "../util/readline-word-nav.js";
 
 const PLATFORM_ACCOUNT_NAMES = Object.fromEntries(
   PLATFORMS.map((platform) => [platform, PLATFORM_METADATA[platform].defaultAccount])
@@ -299,7 +300,8 @@ async function editPlatformPrompt(project: UspConfig, platform: Platform) {
   const value = orBack(
     await text({
       message: action === "append" ? "Text to append" : "Replacement prompt",
-      defaultValue: existing?.mode === action ? existing.text : undefined,
+      // Pre-fill the editor with the current override so it can be edited, not retyped.
+      initialValue: existing?.text ?? "",
     })
   );
   project.prompts[platform] = { mode: action, text: value };
@@ -547,7 +549,8 @@ async function configureGlobalPrompt() {
   const value = orBack(
     await text({
       message: "Global rules (appended to every prompt)",
-      defaultValue: global.globalPrompt,
+      // Pre-fill with the saved rules so they can be edited in place.
+      initialValue: global.globalPrompt ?? "",
       placeholder: "e.g. Always write in British English.",
     })
   ).trim();
@@ -617,6 +620,7 @@ async function configurePostingDefaults(socialAuth: UspConfig, project: UspConfi
 }
 
 async function runInteractiveSetup() {
+  enableWordNavigation();
   intro("usp setup");
   const projectPath = await ensureProjectConfig();
   const loadedProject = await loadProjectConfig(projectPath);

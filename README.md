@@ -13,17 +13,17 @@
 
 Legend: ✅ supported, 🚧 WIP, ❌ not supported, — n/a.
 
-| Destination | Text | Images | Thread | Link output | API | Browser | Setup |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| [X](https://x.com/) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | [Developer portal](https://developer.x.com/en/portal/dashboard) |
-| [LinkedIn](https://www.linkedin.com/) | ✅ | ✅ | 🚧 | ✅ | ✅ | — | [Developer apps](https://www.linkedin.com/developers/apps) |
-| [Reddit](https://www.reddit.com/) | ✅ | ❌ | — | ✅ | ✅ | — | [OAuth apps](https://www.reddit.com/prefs/apps) |
-| [Telegram](https://telegram.org/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | [BotFather](https://t.me/BotFather) |
-| [Bluesky](https://bsky.app/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | [App passwords](https://bsky.app/settings/app-passwords) |
-| [Mastodon](https://mastodon.social/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | [New application](https://mastodon.social/settings/applications/new) |
-| [Discord](https://discord.com/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | Channel webhook |
-| [Aegea](https://blogengine.me/) | ✅ | ✅ | — | ✅ | ✅ | — | Author password |
-| [Threads](https://www.threads.net/) | ✅ | ✅ | ✅ | ✅ | ✅ | — | [Meta app](https://developers.facebook.com/) |
+| Destination | Text | Images | Thread | API | Browser | Setup |
+| --- | --- | --- | --- | --- | --- | --- |
+| [X](https://x.com/) | ✅ | ✅ | ✅ | ✅ | ✅ | [Developer portal](https://developer.x.com/en/portal/dashboard) |
+| [LinkedIn](https://www.linkedin.com/) | ✅ | ✅ | 🚧 | ✅ | — | [Developer apps](https://www.linkedin.com/developers/apps) |
+| [Reddit](https://www.reddit.com/) | ✅ | ❌ | — | ✅ | — | [OAuth apps](https://www.reddit.com/prefs/apps) |
+| [Telegram](https://telegram.org/) | ✅ | ✅ | ✅ | ✅ | — | [BotFather](https://t.me/BotFather) |
+| [Bluesky](https://bsky.app/) | ✅ | ✅ | ✅ | ✅ | — | [App passwords](https://bsky.app/settings/app-passwords) |
+| [Mastodon](https://mastodon.social/) | ✅ | ✅ | ✅ | ✅ | — | [New application](https://mastodon.social/settings/applications/new) |
+| [Discord](https://discord.com/) | ✅ | ✅ | ✅ | ✅ | — | Channel webhook |
+| [Aegea](https://blogengine.me/) | ✅ | ✅ | — | ✅ | — | Author password |
+| [Threads](https://www.threads.net/) | ✅ | ✅ | ✅ | ✅ | — | [Meta app](https://developers.facebook.com/) |
 
 Reddit posts via the OAuth submit endpoint (self-posts), so local images are linked in the body rather than uploaded. Browser posting (Playwright) currently backs X; everything else is native API.
 

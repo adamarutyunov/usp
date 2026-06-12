@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { localFsPath, readMarkdownInput, readMarkdownText } from "./markdown.js";
+import { loadAllSourceMedia, localFsPath, readMarkdownInput, readMarkdownText } from "./markdown.js";
 
 describe("localFsPath", () => {
   it("converts a file: URL and percent-encoding to a filesystem path", () => {
@@ -24,7 +24,7 @@ describe("localFsPath", () => {
 });
 
 describe("readMarkdownInput", () => {
-  it("extracts normal markdown images in source order and loads local files", async () => {
+  it("extracts markdown images in source order without reading bytes; loads them on demand", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "usp-md-"));
     const imagePath = path.join(dir, "image.png");
     const markdownPath = path.join(dir, "post.md");
@@ -40,8 +40,13 @@ describe("readMarkdownInput", () => {
     expect(input.media).toHaveLength(1);
     expect(input.media[0]?.id).toBe("img1");
     expect(input.media[0]?.alt).toBe("Alt text");
-    expect(input.media[0]?.data?.byteLength).toBe(4);
+    // Parsing builds the catalog only — bytes are NOT read until publish time.
+    expect(input.media[0]?.data).toBeUndefined();
     expect(input.bodyWithMediaPlaceholders).toContain('[media:img1 alt="Alt text"]');
+
+    // loadAllSourceMedia reads the file bytes when a real publish needs them.
+    const loaded = await loadAllSourceMedia(input.media);
+    expect(loaded[0]?.data?.byteLength).toBe(4);
   });
 
   it("supports direct markdown text input", async () => {
@@ -52,9 +57,9 @@ describe("readMarkdownInput", () => {
     expect(input.body).toContain("Body");
   });
 
-  it("rejects private remote image hosts", async () => {
-    await expect(
-      readMarkdownText("![private](http://127.0.0.1/image.png)", "<text>", process.cwd())
-    ).rejects.toThrow("private or link-local host");
+  it("rejects private remote image hosts when bytes are loaded", async () => {
+    // Parsing no longer fetches, so the SSRF guard fires at load time (publish), not parse.
+    const input = await readMarkdownText("![private](http://127.0.0.1/image.png)", "<text>", process.cwd());
+    await expect(loadAllSourceMedia(input.media)).rejects.toThrow("private or link-local host");
   });
 });

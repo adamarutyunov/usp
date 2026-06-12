@@ -262,6 +262,14 @@ export class PublishPipeline {
       }
     };
 
+    // Image bytes are loaded lazily — preview and dry-run never read files. Only a real
+    // publish needs them, so load (and, for remote URLs, fetch) the source media once here,
+    // right before dispatching to adapters. Targets share these objects, so a reused
+    // preview's source images are covered too; preview-added images load in the store.
+    if (!previewOnly && !dryRun) {
+      input.media = await this.inputSource.loadMedia(input.media);
+    }
+
     const results = await mapWithConcurrency(targets, this.concurrency, processTarget);
     return { input, plan: basePlan, results, previewDir };
   }
