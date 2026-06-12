@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import type { SourceMedia } from "../types.js";
 import { fetchWithTimeout, readJsonResponse } from "../util/http.js";
 import { resolveSecret } from "../util/secrets.js";
 import {
@@ -26,6 +27,10 @@ const PARSE_MODE = "Markdown";
 function isParseEntitiesError(error: unknown) {
   return error instanceof Error && /can't parse entities|can't find end|parse entities/i.test(error.message);
 }
+
+// Bot API photo/media-group captions are capped at 1024 chars — Premium does NOT raise this
+// for bots (it's a client-only perk). Longer text is sent as a separate message instead.
+const CAPTION_LIMIT = 1024;
 
 async function sendWithMarkdownFallback(
   send: (useParseMode: boolean) => Promise<TelegramResult>
@@ -93,6 +98,51 @@ function postFromResult(data: TelegramResult, text: string, chatId: string): Pub
   };
 }
 
+function buildPhotoForm(chatId: string, item: SourceMedia, caption: string | undefined, useParseMode: boolean) {
+  const form = new FormData();
+  form.set("chat_id", chatId);
+  if (caption) {
+    form.set("caption", caption);
+    if (useParseMode) {
+      form.set("parse_mode", PARSE_MODE);
+    }
+  }
+  if (item.isRemote) {
+    form.set("photo", item.rawPath);
+  } else {
+    form.append("photo", mediaBlob(item, "telegram"), path.basename(item.resolvedPath));
+  }
+  return form;
+}
+
+function buildMediaGroupForm(chatId: string, media: SourceMedia[], caption: string | undefined, useParseMode: boolean) {
+  const form = new FormData();
+  form.set("chat_id", chatId);
+  const payload = media.map((item, index) => {
+    const itemCaption = index === 0 ? caption : undefined;
+    const parseMode = useParseMode && itemCaption ? { parse_mode: PARSE_MODE } : {};
+    if (item.isRemote) {
+      return { type: "photo", media: item.rawPath, caption: itemCaption, ...parseMode };
+    }
+    const field = `file${index}`;
+    form.append(field, mediaBlob(item, "telegram"), path.basename(item.resolvedPath));
+    return { type: "photo", media: `attach://${field}`, caption: itemCaption, ...parseMode };
+  });
+  form.set("media", JSON.stringify(payload));
+  return form;
+}
+
+function sendTextMessage(botToken: string, chatId: string, text: string) {
+  return sendWithMarkdownFallback((useParseMode) =>
+    callTelegram(botToken, "sendMessage", {
+      chat_id: chatId,
+      text,
+      disable_web_page_preview: false,
+      ...(useParseMode ? { parse_mode: PARSE_MODE } : {}),
+    })
+  );
+}
+
 export async function publishToTelegram(context: PublishContext) {
   if (context.dryRun) {
     return dryRunResult(context);
@@ -108,52 +158,35 @@ export async function publishToTelegram(context: PublishContext) {
     const media = getReferencedMedia(context.media, unit.mediaRefs);
 
     if (media.length === 0) {
+      const data = await sendTextMessage(botToken, chatId, unit.text);
+      return postFromResult(data, unit.text, chatId);
+    }
+
+    // A caption is limited to 1024 chars; when the text is longer, post the media
+    // uncaptioned and send the full text as its own message so nothing is dropped.
+    const captionTooLong = unit.text.length > CAPTION_LIMIT;
+
+    if (media.length === 1) {
+      const item = media[0]!;
+      if (captionTooLong) {
+        await callTelegram(botToken, "sendPhoto", buildPhotoForm(chatId, item, undefined, false));
+        const data = await sendTextMessage(botToken, chatId, unit.text);
+        return postFromResult(data, unit.text, chatId);
+      }
       const data = await sendWithMarkdownFallback((useParseMode) =>
-        callTelegram(botToken, "sendMessage", {
-          chat_id: chatId,
-          text: unit.text,
-          disable_web_page_preview: false,
-          ...(useParseMode ? { parse_mode: PARSE_MODE } : {}),
-        })
+        callTelegram(botToken, "sendPhoto", buildPhotoForm(chatId, item, unit.text, useParseMode))
       );
       return postFromResult(data, unit.text, chatId);
     }
 
-    if (media.length === 1) {
-      const item = media[0]!;
-      const data = await sendWithMarkdownFallback((useParseMode) => {
-        const form = new FormData();
-        form.set("chat_id", chatId);
-        form.set("caption", unit.text);
-        if (useParseMode) {
-          form.set("parse_mode", PARSE_MODE);
-        }
-        if (item.isRemote) {
-          form.set("photo", item.rawPath);
-        } else {
-          form.append("photo", mediaBlob(item, "telegram"), path.basename(item.resolvedPath));
-        }
-        return callTelegram(botToken, "sendPhoto", form);
-      });
+    if (captionTooLong) {
+      await callTelegram(botToken, "sendMediaGroup", buildMediaGroupForm(chatId, media, undefined, false));
+      const data = await sendTextMessage(botToken, chatId, unit.text);
       return postFromResult(data, unit.text, chatId);
     }
-
-    const data = await sendWithMarkdownFallback((useParseMode) => {
-      const form = new FormData();
-      form.set("chat_id", chatId);
-      const mediaPayload = media.map((item, index) => {
-        const caption = index === 0 ? unit.text : undefined;
-        const parseMode = useParseMode && caption ? { parse_mode: PARSE_MODE } : {};
-        if (item.isRemote) {
-          return { type: "photo", media: item.rawPath, caption, ...parseMode };
-        }
-        const field = `file${index}`;
-        form.append(field, mediaBlob(item, "telegram"), path.basename(item.resolvedPath));
-        return { type: "photo", media: `attach://${field}`, caption, ...parseMode };
-      });
-      form.set("media", JSON.stringify(mediaPayload));
-      return callTelegram(botToken, "sendMediaGroup", form);
-    });
+    const data = await sendWithMarkdownFallback((useParseMode) =>
+      callTelegram(botToken, "sendMediaGroup", buildMediaGroupForm(chatId, media, unit.text, useParseMode))
+    );
     return postFromResult(data, unit.text, chatId);
   });
 
