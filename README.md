@@ -32,10 +32,10 @@ Reddit posts via the OAuth submit endpoint (self-posts), so local images are lin
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/adamarutyunov/usp/main/install.sh | sh   # VERSION=v0.1.0 to pin
+curl -fsSL https://raw.githubusercontent.com/adamarutyunov/usp/main/install.sh | sh   # VERSION=v1.0.1 to pin
 ```
 
-Or `pnpm add -g usp && pnpx playwright install chromium`. The installer also pulls Playwright Chromium; install Google Chrome for `usp login`.
+The installer clones the repo, builds, and links `usp` globally, and pulls Playwright Chromium. Install Google Chrome for `usp login`. For a manual setup, see [From Source](#from-source).
 
 <!-- SCREENSHOT: interactive target tree -->
 
@@ -262,7 +262,7 @@ jobs:
           ${{ github.event.release.body }}
           ${{ github.event.release.html_url }}
           MD
-      - uses: adamarutyunov/usp@v0.1.0
+      - uses: adamarutyunov/usp@v1
         with: { markdown: post.md, profile: release }
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

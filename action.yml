@@ -18,6 +18,10 @@ inputs:
 runs:
   using: composite
   steps:
+    - uses: pnpm/action-setup@v4
+      with:
+        package_json_file: ${{ github.action_path }}/package.json
+
     - name: Setup Node
       uses: actions/setup-node@v4
       with:
@@ -25,12 +29,12 @@ runs:
 
     - name: Install dependencies
       shell: bash
-      run: npm ci
+      run: pnpm install --frozen-lockfile
       working-directory: ${{ github.action_path }}
 
     - name: Build usp
       shell: bash
-      run: npm run build
+      run: pnpm build
       working-directory: ${{ github.action_path }}
 
     - name: Publish

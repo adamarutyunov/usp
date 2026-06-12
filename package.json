@@ -1,8 +1,9 @@
 {
   "name": "usp",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "description": "Ultimate Social Poster CLI for publishing Markdown posts to X, LinkedIn, Reddit, Telegram, Aegea, Bluesky, Mastodon, and Discord.",
   "type": "module",
+  "packageManager": "pnpm@9.15.9",
   "bin": {
     "usp": "dist/cli.js"
   },
